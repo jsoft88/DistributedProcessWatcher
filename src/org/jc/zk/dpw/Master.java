@@ -534,7 +534,13 @@ public class Master implements
         if (this.child && this.activeChild && this.p != null) {
             byte[] hbkillData = Utils.processHeartBeatDataToBytes(ProcessWrapper.FLAG_KILLSELF);
             this.dm.createProcessHeartBeatZnode(this.heartBeatZnode, hbkillData);
-            
+            synchronized (this) {
+                try {
+                    wait(15000L);
+                } catch (InterruptedException ex) {
+                    logger.error("CMW interrupted while waiting grace period before destroying ProcessWrapper", ex);
+                }
+            }
             logger.info("Child Master Watcher was told to destroy its process and wait.");
             this.p.destroy();
             this.closing(0);
