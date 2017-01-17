@@ -16,12 +16,12 @@ public class MasterWatcherHandlerMain {
     
     public static void main(String[] args) throws Exception {
         
-        if (args == null || args.length < 16) {
+        if (args == null || args.length < 18) {
             System.out.println("Invoke: hadoop jar /path/to/DPW.jar org.jc.zk.dpw.MasterWatcherHandlerMain " + 
                     "uniqueId zkHost zkPort zkTimeListenerZnode zkKeepAliveZnode zkProcessObservedZnode " +
                     "/absolute/path/program/to/run arg1,arg2,...,argn isChild isActiveChild numberOfChildren " +
                     "intervalToWaitForUpdate childUpdateZnode1,childUpdateZnode2... znodeToCreateForUpdate " + 
-                    "ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis");
+                    "ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis hardKillScript");
             System.out.println("------------------");
             System.out.println("Common args");
             System.out.println("------------------");
@@ -42,6 +42,7 @@ public class MasterWatcherHandlerMain {
             System.out.println("intervalToWaitForUpdate: how many millis will an Active Master Watcher wait for all CMWs to push their updates");
             System.out.println("childUpdateZnode1,childUpdateZnode2: list of znodes that CMWs will create to push updates separated by comma. Each cmw has an unique znode");
             System.out.println("znodeToCreateForUpdate: set to null when deploying master");
+            System.out.println("hardKillScript: use keyword null.");
             System.out.println("---------------------------------------");
             System.out.println("When launching a Child Master Watcher:");
             System.out.println("---------------------------------------");
@@ -52,6 +53,7 @@ public class MasterWatcherHandlerMain {
             System.out.println("childUpdateZnode1,childUpdateZnode2: list of znodes that CMWs will create to push updates separated by comma. In this case, set to null");
             System.out.println("znodeToCreateForUpdate: an unique znode that this CMW will create to push update");
             System.out.println("idOfParentMasterWatcher: id of parent Master Watcher.");
+            System.out.println("hardKillScript: include command plus script to be run when the CMW is told to kill itself due to failure. Ex: bash /path/to/command.sh");
             
             System.exit(1);
         }
@@ -96,6 +98,11 @@ public class MasterWatcherHandlerMain {
         }
         String idOfParentMasterWatcher = args[15].trim();
         String maxForgiveMeMillis = args[16].trim();
+        String aHardKillScript = args[17].trim();
+        String hardKillScript = null;
+        if (!aHardKillScript.toLowerCase().equals("null")) {
+            hardKillScript = aHardKillScript;
+        }
         
         ExecutorService es = Executors.newFixedThreadPool(1);
         
@@ -114,6 +121,7 @@ public class MasterWatcherHandlerMain {
                 Long.valueOf(interval),
                 idOfParentMasterWatcher,
                 Long.parseLong(maxForgiveMeMillis),
+                hardKillScript,
                 znodesForUpdate, 
                 znodeToCreateForUpdate, 
                 ntpServers);

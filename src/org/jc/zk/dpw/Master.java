@@ -108,6 +108,8 @@ public class Master implements
     
     private final long maxForgiveMeMillis;
     
+    private final String hardKillScript;
+    
     private static final int MAX_HEARTBEAT_MISS = 3;
     
     //private static final long MAX_CHECKUP_MISS = 95000L;
@@ -143,6 +145,7 @@ public class Master implements
             long timeTickInterval,
             String parentMasterWatcherId,
             long maxForgiveMeMillis,
+            String hardKillScript,
             String[] cmwsZnodesToListenTo,
             String zkNodeToCreateForUpdate,
             String[] ntpServers) throws IOException, Exception {
@@ -202,6 +205,7 @@ public class Master implements
         this.p = null;
         this.itmWaitCountdown = new CountDownLatch(1);
         this.maxForgiveMeMillis = maxForgiveMeMillis;
+        this.hardKillScript = hardKillScript;
     }
 
     @Override
@@ -536,19 +540,45 @@ public class Master implements
             this.dm.createProcessHeartBeatZnode(this.heartBeatZnode, hbkillData);
             synchronized (this) {
                 try {
-                    wait(15000L);
+                    wait(8000L);
                 } catch (InterruptedException ex) {
                     logger.error("CMW interrupted while waiting grace period before destroying ProcessWrapper", ex);
                 }
             }
             logger.info("Child Master Watcher was told to destroy its process and wait.");
             this.p.destroy();
-            this.closing(0);
+            //Assemble hard kill script
+            ProcessBuilder kpb = new ProcessBuilder(this.hardKillScript.split("\\s"));
+            try {
+                Process kp = kpb.start();
+                ProcessStreamConsumer scInfo = new ProcessStreamConsumer(kp.getInputStream(), logger);
+                ProcessStreamConsumer scError = new ProcessStreamConsumer(kp.getErrorStream(), logger);
+                scInfo.start();
+                scError.start();
+                int exitStatus = kp.waitFor();
+                scInfo.join();
+                scError.join();
+                
+                if (exitStatus == 0) {
+                    logger.info("Hard kill script completed successfully.");
+                } else {
+                    logger.info("Hard kill script failed to complete correctly. Exit code is: " + exitStatus);
+                }
+            } catch (IOException | InterruptedException ex) {
+                if (ex instanceof IOException) {
+                    logger.error("Hard kill Script not found. There's a possibility that when new AMW is elected, the process will not be deployed.", ex);
+                } else if (ex instanceof InterruptedException) {
+                    logger.error("CMW interrupted while waiting for hard kill script to complete. Best effort kill in progress, that is, no way of knowing if things went well.");
+                }
+            } finally {
+                this.closing(0);
+            }
         }
     }
 
     @Override
     public void masterWatcherZnodeCreated(boolean error, byte[] data) {
+        this.setWatchers();
         if (this.active) {
             if (error) {
                 logger.info("Active Master Watcher failed to create masters' keep alive znode and now it will retry.");
