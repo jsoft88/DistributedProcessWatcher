@@ -52,6 +52,7 @@ Additionaly, there's a currently unused flag, which indicates whether the CMW is
   <li>ntpServer1,ntpServer2: list of NTP servers separated by comma.</li>
   <li>idOfParentMasterWatcher: identifier of the MW a CMW is linked to. If this refers to an instance of MW, this value matches its <b>uniqueId</b>.</li>
   <li>maxForgiveMeMillis: how many milliseconds will IMWs wait before competing for a new election after the current AMW fails to update multiple times. This should be larger than <b>time ticks interval</b> used for TMs.</li>
+  <li>hardKillScript: provide a combination of command plus script to hard kill processes. This is necessary if you consider that a process.destroy() won't suffice. This script will be executed when the active CMW is told to kill itself.</li>  
   </ul></li>
 </ul><br/>
 <b id="sdp">Safety Deletion Policy</b>
