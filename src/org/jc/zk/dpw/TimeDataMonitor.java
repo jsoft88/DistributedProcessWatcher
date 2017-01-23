@@ -7,6 +7,7 @@ package org.jc.zk.dpw;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Map;
 import org.apache.zookeeper.AsyncCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -15,6 +16,7 @@ import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
+import org.jc.zk.Util.AsyncZnodeModifier;
 import org.jc.zk.util.Utils;
 
 /**
@@ -35,6 +37,8 @@ public class TimeDataMonitor implements
     
     private final String[] ntpServers;
     
+    private final String requestAMWKillZnode;
+    
     private final String znodeForTimeListeners;
     
     private final TimeDataMonitor.TMInterfaceListener listener;
@@ -45,11 +49,20 @@ public class TimeDataMonitor implements
     
     private static final String REQTR_MASTER_ID = "rqmsid";
     
+    @Deprecated
     private static final String WRITE_TIME_TO_PROCESS_MASTERS = "wtpm";
+    
+    private static final String TIME_MASTER_KEEP_ALIVE_ZNODE = "tmkazn";
+    
+    private static final String TIME_LISTENERS_ZNODE = "tlzn";
+    
+    private static final String REQUEST_AMW_KILL_ZNODE = "ramwzn";
     
     private static final String PATH_TO_ZNODE_MASTER_PROC = "ptzmp";
     
     private static final String TIME_PAYLOAD = "tpay";
+    
+    private static final String ZNODE_TYPE = "zntype";
     
     public TimeDataMonitor(String masterId,
             String zkHost, 
@@ -57,6 +70,7 @@ public class TimeDataMonitor implements
             String timeZnode,
             String znodeForTimeListeners,
             String timeZnodeRemovedFlagZnode,
+            String requestAMWKillZnode,
             String[] ntpServers,
             TimeDataMonitor.TMInterfaceListener listener) 
             throws IOException {
@@ -69,6 +83,7 @@ public class TimeDataMonitor implements
         this.listener = listener;
         this.zk = new ZooKeeper(this.zkHost + ":" + this.zkPort, 60000, this);
         this.timeZnodeRemovedFlagZnode = timeZnodeRemovedFlagZnode;
+        this.requestAMWKillZnode = requestAMWKillZnode;
     }
     
     public static interface TMInterfaceListener {
@@ -174,6 +189,12 @@ public class TimeDataMonitor implements
          * Callback invoked to notify that notification znode was created.
          */
         void notificationZnodeCreated();
+        
+        void requestAMWKillZnodeChanged();
+        
+        void requestAMWKillZnodeDataRead(byte[] data, boolean error);
+        
+        void requestAMWKillZnodeDataSet(byte[] data, boolean error);
     }
     
     @Override
@@ -202,6 +223,8 @@ public class TimeDataMonitor implements
                     //this.zk.getData(this.timeZnode, null, this, this.ctx);
                 } else if (event.getPath().equals(this.znodeForTimeListeners)) {
                     this.listener.timeListenersZnodeChanged();
+                } else if (event.getPath().equals(this.requestAMWKillZnode)) {
+                    this.listener.requestAMWKillZnodeChanged();
                 }
                 break;
             case None:
@@ -235,9 +258,22 @@ public class TimeDataMonitor implements
     
     public void testBindToZnodeListener(boolean bindToTimeZnode) {
         this.zk.exists(this.znodeForTimeListeners, this, this, null);
+        this.zk.exists(this.requestAMWKillZnode, this, this, null);
         if (bindToTimeZnode) {
             this.zk.exists(this.timeZnode, this, this, null);
         }
+    }
+    
+    public void getRequestAMWKillZnodeData() {
+        this.zk.getData(this.requestAMWKillZnode, null, this, new HashMap<>());
+    }
+    
+    public void setRequestAMWKillZnodeData(byte[] data) {
+        Map<String, String> ctx = new HashMap<>();
+        ctx.put(ZNODE_TYPE, REQUEST_AMW_KILL_ZNODE);
+        ctx.put(TIME_PAYLOAD, Utils.requestAMWKillZnodeDataToString(data));
+        
+        this.zk.setData(this.timeZnode, data, -1, this, ctx);
     }
     
     public void bindOnceToNotificationZnode() {
@@ -252,6 +288,7 @@ public class TimeDataMonitor implements
     public void updateZNode(byte[] data) {
         HashMap<String, String> ctx = new HashMap<>();
         ctx.put(WRITE_TIME_TO_PROCESS_MASTERS, "false");
+        ctx.put(ZNODE_TYPE, TIME_MASTER_KEEP_ALIVE_ZNODE);
         ctx.put(TIME_PAYLOAD, Utils.timeMasterDataForTimeZnodeToString(data));
         this.zk.setData(this.timeZnode, data, -1, this, ctx);
     }
@@ -279,6 +316,11 @@ public class TimeDataMonitor implements
                 this, ctx);
     }
     
+    public void triggerAsyncAMWRequestKillZnodeRestore(byte[] data, long modifyWaitMillis) {
+        AsyncZnodeModifier azm = new AsyncZnodeModifier(this.requestAMWKillZnode, data, this.zk, modifyWaitMillis);
+        new Thread(azm).start();
+    }
+    
     /**
      * This method will query the status notification znode, that is, the znode
      * that ATM uses to communicate its status to ITMs, to retrieve the last
@@ -297,6 +339,7 @@ public class TimeDataMonitor implements
     public void writeTimeForProcessMasters(byte[] data) {
         HashMap<String, String> ctx = new HashMap<>();
         ctx.put(WRITE_TIME_TO_PROCESS_MASTERS, "true");
+        ctx.put(ZNODE_TYPE, TIME_LISTENERS_ZNODE);
         ctx.put(PATH_TO_ZNODE_MASTER_PROC, this.znodeForTimeListeners);
         ctx.put(TIME_PAYLOAD, Utils.timeMasterDataForTimeListenersToString(data));
         this.zk.setData(this.znodeForTimeListeners, data, -1, this, ctx);
@@ -318,6 +361,8 @@ public class TimeDataMonitor implements
                     this.listener.retrievedTimeZnodeLastUpdate(data, false);
                 } else if (path.equals(this.znodeForTimeListeners)) {
                     this.listener.activeMasterPushedUpdate(data, false);
+                } else if (path.equals(this.requestAMWKillZnode)) {
+                    this.listener.requestAMWKillZnodeDataRead(data, false);
                 }
                 
                 break;
@@ -333,6 +378,8 @@ public class TimeDataMonitor implements
                     this.listener.retrievedTimeZnodeLastUpdate(null, true);
                 } else if (path.equals(this.znodeForTimeListeners)) {
                     this.listener.activeMasterPushedUpdate(null, true);
+                } else if (path.equals(this.requestAMWKillZnode)) {
+                    this.listener.requestAMWKillZnodeDataRead(null, true);
                 }
                 
                 break;
@@ -403,15 +450,19 @@ public class TimeDataMonitor implements
             case OK:
                 if (ctx != null) {
                     //We're trying to set data.
-                    byte[] data = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
-                    if (Boolean.parseBoolean(((HashMap<String, String>)ctx).get(WRITE_TIME_TO_PROCESS_MASTERS))) {
-                        //What happened is that we wrote data to znode where processes
-                        //masters listen to.
-                        this.listener.updatePushedToTimeListenersZnode(data, false);
-                    } else {
-                        //Master wrote to time masters' znode, to acknowledge
-                        //it is alive.
-                        this.listener.updatePushedToTimeZnode(data, false);
+                    switch (((Map<String, String>)ctx).get(ZNODE_TYPE)) {
+                        case TIME_LISTENERS_ZNODE:
+                            byte[] tlData = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.updatePushedToTimeListenersZnode(tlData, false);
+                            break;
+                        case TIME_MASTER_KEEP_ALIVE_ZNODE:
+                            byte[] tkData = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.updatePushedToTimeZnode(tkData, false);
+                            break;
+                        case REQUEST_AMW_KILL_ZNODE:
+                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.requestAMWKillZnodeDataSet(rkData, false);
+                            break;
                     }
                 }
                 //If ctx is null, what we're trying to achieve here is a bind.
@@ -425,11 +476,20 @@ public class TimeDataMonitor implements
                 //Something went wrong
                 if (ctx != null) {
                     //we signal that the write failed.
-                    byte[] data = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
-                    if (Boolean.parseBoolean(((HashMap<String, String>)ctx).get(WRITE_TIME_TO_PROCESS_MASTERS))) {
-                        this.listener.updatePushedToTimeListenersZnode(data, true);
-                    } else {
-                        this.listener.updatePushedToTimeZnode(data, true);
+                    //if context is empty, then requestAMWKillZnode update failed.
+                    switch (((Map<String, String>)ctx).get(ZNODE_TYPE)) {
+                        case TIME_LISTENERS_ZNODE:
+                            byte[] tlData = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.updatePushedToTimeListenersZnode(tlData, true);
+                            break;
+                        case TIME_MASTER_KEEP_ALIVE_ZNODE:
+                            byte[] tkData = Utils.timeMasterDataForTimeZnodeToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.updatePushedToTimeZnode(tkData, true);
+                            break;
+                        case REQUEST_AMW_KILL_ZNODE:
+                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            this.listener.requestAMWKillZnodeDataSet(rkData, true);
+                            break;
                     }
                 } else {
                     //We were trying to achieve a bind, not a write, so we retry.

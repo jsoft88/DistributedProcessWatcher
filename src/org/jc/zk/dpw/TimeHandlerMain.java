@@ -6,8 +6,10 @@
 package org.jc.zk.dpw;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -18,8 +20,8 @@ import java.util.logging.Logger;
 public class TimeHandlerMain {
     
     public static void main(String[] args) {
-        if (args.length < 7) {
-            System.out.println("Usage: hadoop jar /path/to/DPW.jar org.jc.zk.dpw.TimeHandlerMain uniqueIdentifier zkHost zkPort zkTimeNode zkTimeListenersNode intervalMillis ntpserver1,ntpserver2");
+        if (args.length < 8) {
+            System.out.println("Usage: hadoop jar /path/to/DPW.jar org.jc.zk.dpw.TimeHandlerMain uniqueIdentifier zkHost zkPort zkTimeNode zkTimeListenersNode intervalMillis ntpserver1,ntpserver2 amwKillRequestZnode");
             System.out.println("---------------------------------------------------------------------");
             System.out.println("uniqueIdentifier: an unique identifier for this instance of Time Master.");
             System.out.println("zkHost: zookeeper host");
@@ -28,6 +30,7 @@ public class TimeHandlerMain {
             System.out.println("zkTimeListenersNode: znode where time ticks will be placed. This znode must match the one used by MWs and CMWs.");
             System.out.println("intervalMillis: interval millis of ticks being sent to time listeners znode. Remember that this must be long enough to allow AMW retrieve updates from CMWs.");
             System.out.println("ntpServer1,ntpServer2: list of ntp servers separated by comma.");
+            System.out.println("amwKillZnode: znode where IMWs will request for permission to run a new competition for the new AMW to be elected.");
             
             System.exit(1);
         }
@@ -43,11 +46,18 @@ public class TimeHandlerMain {
         for (int i = 0; i < receivedNtpServers.length; ++i) {
             ntpServers[i] = receivedNtpServers[i].trim();
         }
+        String amwKillRequestZnode = args[7].trim();
         
         ExecutorService es = Executors.newFixedThreadPool(1);
         try {
-            TimeMaster tm = new TimeMaster(masterIdentifier, zkHost, zkPort, zkTimeNode, zkTimeListenersNode, Long.parseLong(interval), ntpServers);
-            es.submit(tm);
+            TimeMaster tm = new TimeMaster(masterIdentifier, zkHost, zkPort, zkTimeNode, zkTimeListenersNode, amwKillRequestZnode, Long.parseLong(interval), ntpServers);
+            Future f = es.submit(tm);
+            try {
+                //Dummy wait.
+                f.get();
+            } catch (InterruptedException | ExecutionException ex) {
+                Logger.getLogger(TimeHandlerMain.class.getName()).log(Level.SEVERE, null, ex);
+            }
         } catch (IOException ex) {
             Logger.getLogger(TimeHandlerMain.class.getName()).log(Level.SEVERE, null, ex);
             throw new UnsupportedOperationException(ex.getMessage());

@@ -342,4 +342,12 @@ public class Utils {
     public static String updateZnodeCreatedByMastersDataToString(byte[] data) {
         return new String(data, Charset.forName("UTF-8"));
     }
+    
+    public static String requestAMWKillZnodeDataToString(byte[] data) {
+        return new String(data, Charset.forName("UTF-8"));
+    }
+    
+    public static byte[] requestAMWKillZnodeDataToBytes(String data) {
+        return data.getBytes(Charset.forName("UTF-8"));
+    }
 }

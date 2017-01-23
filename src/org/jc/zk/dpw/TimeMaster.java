@@ -62,11 +62,25 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     
     private long cummulativeTime;
     
+    private final String requestAMWKillZkNode;
+    
+    private long timeAMWFirstKillArrived = 0L;
+    
     private static final String TIME_ZNODE_REMOVED_NOTIF_ZNODE = "/dpw0001241564/tm_tzrzn";
     
     private static final long NOTIFICATION_ZNODE_MAX_CREATION_OFFSET = 30000L;
     
     private static final long VERY_LONG_TIME = NOTIFICATION_ZNODE_MAX_CREATION_OFFSET * 15;
+    
+    public static final String AMW_REQUEST_KILL_CODE_KILL = "kill";
+    
+    public static final String AMW_REQUEST_KILL_CODE_ALLOW = "allow";
+    
+    public static final String AMW_REQUEST_KILL_CODE_DENIED = "denied";
+    
+    public static final String AMW_REQUEST_KILL_FREE = "free";
+    
+    public static final String AMW_REQUEST_KILL_BUSY = "busy";
     
     private static final Logger logger = Logger.getLogger(TimeMaster.class);
     
@@ -76,6 +90,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             String zkPort,
             String zkNode,
             String zkNodeForTimeListeners,
+            String requestAMWKillZkNode,
             long intervalMillis, 
             String[] ntpServers) throws IOException {
         
@@ -86,6 +101,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
         this.zkNodeForTimeListeners = zkNodeForTimeListeners;
         this.intervalMillis = intervalMillis;
         this.ntpServers = ntpServers;
+        this.requestAMWKillZkNode = requestAMWKillZkNode;
         this.tdm = new TimeDataMonitor(
                 this.masterId, 
                 this.zkHost, 
@@ -93,6 +109,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
                 this.zkNodeForTime, 
                 this.zkNodeForTimeListeners,
                 TIME_ZNODE_REMOVED_NOTIF_ZNODE,
+                this.requestAMWKillZkNode,
                 this.ntpServers, 
                 this);
         this.killSelf = false;
@@ -257,6 +274,10 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     public void masterElected(String idOfMasterElected) {
         logger.info("Inactive Time Master with ID: " + this.masterId + ", received new master is: " + idOfMasterElected);
         this.imMaster = this.masterId.equals(idOfMasterElected);
+        if (this.imMaster) {
+            this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE));
+        }
+        
         this.shouldBindToTimeZnode = true;
         this.setWatchers();
         synchronized (this) {
@@ -548,10 +569,15 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
 
     @Override
     public void timeListenersZnodeCreated() {
-        logger.info("Time Listeners znode created.");
-        this.shouldBindToTimeZnode = true;
-        this.setWatchers();
-        this.startTimeTick();
+        logger.info("Verify if this is a re-bind to time listeners znode or is actually being created.");
+        if (!this.clockTicking) {
+            logger.info("Time Listeners znode created.");
+            this.shouldBindToTimeZnode = true;
+            this.setWatchers();
+            this.startTimeTick();
+        } else {
+            logger.info("Re-binding to Time listeners znode.");
+        }
     }
 
     @Override
@@ -607,5 +633,42 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     public void notificationZnodeCreated() {
         logger.info("Notification flag znode created.");
         this.tdm.bindOnceToNotificationZnode();
+    }
+
+    @Override
+    public void requestAMWKillZnodeChanged() {
+        this.tdm.testBindToZnodeListener(this.shouldBindToTimeZnode);
+        if (this.imMaster) {
+            this.tdm.getRequestAMWKillZnodeData();
+        }
+    }
+
+    @Override
+    public void requestAMWKillZnodeDataRead(byte[] data, boolean error) {
+        if (error) {
+            this.tdm.getRequestAMWKillZnodeData();
+            return;
+        }
+        
+        if (this.imMaster) {
+            String sData = Utils.requestAMWKillZnodeDataToString(data);
+            if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived == 0L) {
+                this.timeAMWFirstKillArrived = System.currentTimeMillis();
+                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW));
+                this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE), this.intervalMillis * 2);
+            } else if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived != 0L){
+                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED));
+            }
+            //Ignores if the call is caused by a BUSY set.
+        }
+    }
+
+    @Override
+    public void requestAMWKillZnodeDataSet(byte[] data, boolean error) {
+        if (error) {
+            this.tdm.setRequestAMWKillZnodeData(data);
+            return;
+        }
+        this.timeAMWFirstKillArrived = 0L;
     }
 }

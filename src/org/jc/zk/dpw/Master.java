@@ -68,7 +68,7 @@ public class Master implements
     
     private final int numberOfCMW;
     
-    //private CountDownLatch cdl;
+    private CountDownLatch cdl;
     
     private final CountDownLatch connCd;
     
@@ -110,6 +110,8 @@ public class Master implements
     
     private final String hardKillScript;
     
+    private final String amwRequestKillZnode;
+    
     private static final int MAX_HEARTBEAT_MISS = 3;
     
     //private static final long MAX_CHECKUP_MISS = 95000L;
@@ -146,6 +148,7 @@ public class Master implements
             String parentMasterWatcherId,
             long maxForgiveMeMillis,
             String hardKillScript,
+            String amwRequestKillZnode,
             String[] cmwsZnodesToListenTo,
             String zkNodeToCreateForUpdate,
             String[] ntpServers) throws IOException, Exception {
@@ -167,6 +170,7 @@ public class Master implements
         this.heartBeatZnode = this.child ? 
                 ZNODE_FOR_UPDATE_REQUEST.replace("#", this.masterIdentifier) :
                 null;
+        this.amwRequestKillZnode = amwRequestKillZnode;
         this.dm = new DataMonitor(
                 this.zk, 
                 this.zkMasterStatusNode, 
@@ -179,6 +183,7 @@ public class Master implements
                 TIME_ZNODE_REMOVED_NOTIF_ZNODE,
                 Arrays.asList(cmwsZnodesToListenTo),
                 this.heartBeatZnode,
+                this.amwRequestKillZnode,
                 this, 
                 this);
         this.killSelf = false;
@@ -630,6 +635,7 @@ public class Master implements
                     notify();
                 } else if (!this.child && !this.active){
                     this.runningElection = true;
+                    this.dm.readAmwRequestKillZnodeData();/*
                     try {
                         //The wait that ends first will try to create the master's znode.
                         logger.info("Will wait " + SAFETY_ELECTION_WAIT_TIME_MILLIS + " millis before proceeding to election.");
@@ -651,7 +657,7 @@ public class Master implements
                             //Assume that it is late to run for master, so he does not participate
                             //in the competition.
                         }
-                    }
+                    }*/
                 }
             }
         }
@@ -702,7 +708,11 @@ public class Master implements
         this.setWatchers();
         logger.info("Time znode was removed, possibly due to Active Master Watcher killing itself. Run mastership competition.");
         if (!this.child && !this.active) {
-            new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+            synchronized (this) {
+                if (!this.runningElection) {
+                    new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                }
+            }
         } 
     }
 
@@ -728,7 +738,7 @@ public class Master implements
         } else if (this.child) {
             this.activeMasterId = null;
             this.lastUpdate = INITIAL_TIME;
-        } else if (!this.child) { 
+        } else if (!this.child && !this.active) { 
             logger.info("Inactive Master Watcher will compete for mastership because Process Observed znode was removed.");
             synchronized (this) {
                 if (!this.runningElection) {
@@ -787,8 +797,14 @@ public class Master implements
             logger.info("Masters' Keep alive znode removed, Active Master Watcher kills itself.");
             this.closing(0);
         } else if (!this.child) {
-            logger.info("Masters' Keep alive znode removed, inactive master watchers competing for mastership.");
-            new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+            synchronized (this) {
+                if (!this.runningElection) {
+                    new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                    logger.info("Masters' Keep alive znode removed, inactive master watchers competing for mastership.");
+                } else {
+                    logger.info("Masters' Keep alive znode removed, inactive master watchers already competing for mastership.");
+                }
+            }
         }
     }
 
@@ -838,6 +854,7 @@ public class Master implements
         //Nothing to do here
     }
 
+    @Deprecated
     @Override
     public void recreateMasterZnode(boolean allowedToAttemptZnodesRemoval) {
         if (allowedToAttemptZnodesRemoval) {
@@ -899,6 +916,13 @@ public class Master implements
 
     @Override
     public void timeZnodeCreated() {
+        synchronized (this) {
+            if (this.killSelf) {
+                notify();
+                return;
+            }
+        }
+        
         if (this.child) {
             this.setWatchers();
         }
@@ -906,6 +930,9 @@ public class Master implements
         this.runningElection = false;
         this.lastUpdate = INITIAL_TIME;
         logger.info("Time znode created.");
+        if (this.cdl != null && this.cdl.getCount() > 0L) {
+            this.cdl.countDown();
+        }
     }
 
     @Override
@@ -1013,6 +1040,97 @@ public class Master implements
         if (!this.child && this.active) {
             if (error) {
                 this.dm.createChildMasterWatcherZnodeByActiveMaster(znode, data);
+            }
+        }
+    }
+
+    @Override
+    public void amwRequestKillZnodeUpdated(byte[] data, boolean error) {
+        if (error) {
+            logger.error("Error occurred while setting data to amw kill request znode. Retrying.");
+            this.dm.setAmwRequestKillZnodeData(data);
+            return;
+        }
+        
+        logger.info("AMW kill request znode data set succesfully.");
+    }
+
+    @Override
+    public void amwRequestKillZnodeChanged() {
+        logger.info("AMW kill request znode changed.");
+        this.dm.bindToZnodes(this.active);
+        if (!this.child && !this.active) {
+            logger.info("IMW is going to read AMW kill request znode because it changed.");
+            this.dm.readAmwRequestKillZnodeData();
+        } else {
+            logger.info("CMW or AMW ignoring fact that AMW kill request znode changed.");
+        }
+    }
+
+    @Override
+    public void dataReadFromAmwRequestKillZnode(byte[] data) {
+        if (data == null) {
+            logger.error("Error occurred while attempting to read AMW kill request znode. Retrying.");
+            this.dm.readAmwRequestKillZnodeData();
+            return;
+        }
+        
+        String amwZnodeData = Utils.requestAMWKillZnodeDataToString(data);
+        if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_FREE)) {
+            synchronized (this) {
+                if (this.runningElection) {
+                    logger.info("AMW request znode status is FREE. IMW is allowed to request a new master.");
+                    this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL));
+                } else {
+                    logger.info("MW just got notified about initialization of kill request znode.");
+                }
+            }
+        } else if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_CODE_ALLOW)) {
+            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_BUSY));
+            logger.info("IMW is allowed to remove znodes and will become the next AMW. Current ITM id is: " + this.masterIdentifier);
+            this.dm.removeZnode(this.zkTimeNode);
+            this.dm.removeZnode(this.zkMasterStatusNode);
+            this.dm.removeZnode(this.zkWatchedProgramNode);
+            
+            synchronized (this) {
+                try {
+                    wait(5000);
+                } catch (InterruptedException ex) {
+                    logger.error("Inactive Master Watcher interrupted while waiting to remove masters', time and observed znodes.", ex);
+                } finally {
+                    logger.info("Creating time znode, to see who the next active master will be.");
+                    this.lastUpdate = INITIAL_TIME;
+                    this.dm.createTimeZnode(
+                            this.masterIdentifier, 
+                            this.zkTimeNode, 
+                            Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, this.ntpServers));
+                }
+            }
+        } else if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_CODE_DENIED) 
+                || amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_BUSY)) {
+            this.cdl = new CountDownLatch(1);
+            while (true) {
+                try {
+                    logger.info("IMW asked for permission to compete for AMW, but got denied or busy. Will wait a max of " + this.timeTickInterval * 4 + " millis until new time znode for time listeners is created.");
+                    boolean expired = !this.cdl.await(this.timeTickInterval * 4, TimeUnit.MILLISECONDS);
+                    if (!expired) {
+                        logger.info("IMW just got notified that a new time znode for time listeners has been created.");
+                    } else {
+                        logger.info("IMW never got notified about new AMW, that is, no time znode was created.");
+                        if (this.runningElection) {
+                            logger.info("IMW was expecting to compete for new AMW to be elected, but time znode was never created. Requesting permission to kill AMW now.");
+                            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL));
+                        } else {
+                            logger.error("IMW was waiting for time znode to be added by new AMW, but never happened. Also, it was not running election... is that even possible??");
+                        }
+                    }
+                    break;
+                } catch (InterruptedException ex) {
+                    logger.error("ITM interrupted while waiting for new time znode to be created by new AMW.", ex);
+                    if (this.cdl.getCount() == 0L) {
+                        break;
+                    }
+                }
             }
         }
     }

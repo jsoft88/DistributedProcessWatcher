@@ -6,6 +6,7 @@
 package org.jc.zk.dpw;
 
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import org.apache.log4j.Logger;
@@ -51,6 +52,12 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
     private final String processHeartBeatZnode;
     
     private boolean isActiveMaster;
+    
+    private final String amwRequestKillZnode;
+    
+    private final LinkedList<DataMonitorListenerMaster> killRequestListenersQueue;
+    
+    private static final String AMW_REQUEST_KILL_NODE = "amwrkn";
     
     //Context key to store the MW requesting an operation.
     private static final String REQSTR_MASTER_ID = "rqmsid";
@@ -113,6 +120,7 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
             String safeZnodeRemovalNotificationZnode,
             List<String> cmwUpdateZnodes,
             String processHeartBeatZnode,
+            String amwRequestKillZnode,
             Watcher chainedWatcher,
             DataMonitorListenerMaster listener) {
         this.zk = zk;
@@ -127,6 +135,8 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
         this.safeZnodeRemovalNotificationZnode = safeZnodeRemovalNotificationZnode;
         this.processHeartBeatZnode = processHeartBeatZnode;
         this.isActiveMaster = false;
+        this.amwRequestKillZnode = amwRequestKillZnode;
+        this.killRequestListenersQueue = new LinkedList<>();
     }
     
     public interface DataMonitorListenerMaster {
@@ -316,6 +326,12 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
          * creation of znode.
          */
         void updateZnodeCreatedByMaster(String znode, byte[] data, boolean error);
+        
+        void amwRequestKillZnodeUpdated(byte[] data, boolean error);
+        
+        void amwRequestKillZnodeChanged();
+        
+        void dataReadFromAmwRequestKillZnode(byte[] data);
     }
     
     /**
@@ -344,6 +360,7 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                     this.zk.exists(znForUpdate, this, this, null);
                 }
             }
+            this.zk.exists(this.amwRequestKillZnode, this, this, null);
         }
         this.zk.exists(this.znodeTime, this, this, null);
     }
@@ -535,6 +552,20 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
         ctx.put(UPDATE_NODE_EVENT, UPDATE_EVENT_IS_CHANGED);
         this.zk.getData(path, this, this, ctx);
     }
+    
+    public void readAmwRequestKillZnodeData() {
+        Map<String, String> ctx = new HashMap<>();
+        ctx.put(ZNODE_TYPE, AMW_REQUEST_KILL_NODE);
+        this.zk.getData(this.amwRequestKillZnode, this, this, ctx);
+    }
+    
+    public void setAmwRequestKillZnodeData(byte[] data) {
+        Map<String, String> ctx = new HashMap<>();
+        ctx.put(ZNODE_TYPE, AMW_REQUEST_KILL_NODE);
+        ctx.put(ZNODE_PAYLOAD, Utils.requestAMWKillZnodeDataToString(data));
+        
+        this.zk.setData(this.amwRequestKillZnode, data, -1, this, ctx);
+    }
 
     @Override
     public void process(WatchedEvent event) {
@@ -552,6 +583,14 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                     this.listener.cmwUpdatedUpdateZnode(event.getPath());
                 } else if (this.znodeToCreateForUpdates != null && this.znodeToCreateForUpdates.equals(event.getPath())) {
                     this.bindToZnodes(this.isActiveMaster);
+                } else if (path.equals(this.amwRequestKillZnode)) {
+                    //Synchronize on the queue which stores the listeners in order.
+                    synchronized (this.killRequestListenersQueue) {
+                        if (!this.killRequestListenersQueue.isEmpty()) {
+                            DataMonitorListenerMaster aListener = this.killRequestListenersQueue.remove(0);
+                            aListener.amwRequestKillZnodeChanged();
+                        }
+                    }
                 }
                 break;
             case None:
@@ -651,6 +690,13 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                         case CMW_UPDATE_NODE:
                             //Everything went fine, nothing to do.
                             break;
+                        case AMW_REQUEST_KILL_NODE:
+                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(mCtx.get(ZNODE_PAYLOAD));
+                            this.listener.amwRequestKillZnodeUpdated(amwData, false);
+                            synchronized (this.killRequestListenersQueue) {
+                                this.killRequestListenersQueue.addLast(this.listener);
+                            }
+                            break;
                     }
                 }
                 break;
@@ -673,6 +719,10 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                             break;
                         case CMW_UPDATE_NODE:
                             this.setChildMasterWatcherZnode(Utils.childMasterWatcherDataToBytes(mCtx.get(ZNODE_PAYLOAD)));
+                            break;
+                        case AMW_REQUEST_KILL_NODE:
+                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(mCtx.get(ZNODE_PAYLOAD));
+                            this.listener.amwRequestKillZnodeUpdated(amwData, true);
                             break;
                     }
                 }
@@ -832,6 +882,17 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                         }
                         
                         break;
+                    case AMW_REQUEST_KILL_NODE:
+                        final byte[] fAmwData = data;
+                        new Thread(new Runnable() {
+
+                            @Override
+                            public void run() {
+                                DataMonitor.this.listener.dataReadFromAmwRequestKillZnode(fAmwData);
+                            }
+                        }).start();
+                        
+                        break;
                 }
                 break;
             case CONNECTIONLOSS:
@@ -857,6 +918,9 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                         } else if (cCtx.get(UPDATE_NODE_EVENT).equals(UPDATE_EVENT_IS_CHANGED)) {
                             this.listener.childMasterWatcherUpdatedZnode(path, null);
                         }
+                        break;
+                    case AMW_REQUEST_KILL_NODE:
+                        this.listener.dataReadFromAmwRequestKillZnode(null);
                         break;
                 }
                 break;
