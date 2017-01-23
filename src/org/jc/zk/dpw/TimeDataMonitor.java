@@ -265,7 +265,7 @@ public class TimeDataMonitor implements
     }
     
     public void getRequestAMWKillZnodeData() {
-        this.zk.getData(this.requestAMWKillZnode, null, this, new HashMap<>());
+        this.zk.getData(this.requestAMWKillZnode, this, this, new HashMap<>());
     }
     
     public void setRequestAMWKillZnodeData(byte[] data) {
@@ -273,7 +273,7 @@ public class TimeDataMonitor implements
         ctx.put(ZNODE_TYPE, REQUEST_AMW_KILL_ZNODE);
         ctx.put(TIME_PAYLOAD, Utils.requestAMWKillZnodeDataToString(data));
         
-        this.zk.setData(this.timeZnode, data, -1, this, ctx);
+        this.zk.setData(this.requestAMWKillZnode, data, -1, this, ctx);
     }
     
     public void bindOnceToNotificationZnode() {
@@ -297,7 +297,7 @@ public class TimeDataMonitor implements
      * Invoke this method to read data from the znode for time listeners.
      */
     public void getDataFromZnodeForTimeListeners() {
-        this.zk.getData(this.znodeForTimeListeners, null, this, new HashMap<String, String>());
+        this.zk.getData(this.znodeForTimeListeners, this, this, new HashMap<String, String>());
     }
     
     /**

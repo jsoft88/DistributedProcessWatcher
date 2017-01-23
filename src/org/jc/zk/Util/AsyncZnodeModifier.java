@@ -5,11 +5,8 @@
  */
 package org.jc.zk.Util;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.ZooKeeper;
-
 /**
  *
  * @author cespedjo
@@ -26,6 +23,8 @@ public class AsyncZnodeModifier implements Runnable {
     
     private long timeStarted;
     
+    private static final org.apache.log4j.Logger logger = org.apache.log4j.Logger.getLogger(AsyncZnodeModifier.class);
+    
     public AsyncZnodeModifier(String znode, byte[] data, ZooKeeper zk, long modifyWaitMillis) {
         this.znode = znode;
         this.data = data;
@@ -39,21 +38,24 @@ public class AsyncZnodeModifier implements Runnable {
         synchronized (this) {
             while (true) {
                 try {
+                    logger.info("Waiting " + this.modifyWaitMillis + " millis before restoring " + this.znode + " znode to FREE.");
                     wait(this.modifyWaitMillis);
                     break;
                 } catch (InterruptedException ex) {
-                    Logger.getLogger(AsyncZnodeModifier.class.getName()).log(Level.SEVERE, null, ex);
+                    logger.error("Thread interrupted while waiting " + this.modifyWaitMillis + " millis to set " + this.znode + " to FREE.", ex);
                     if (System.currentTimeMillis() - this.timeStarted > this.modifyWaitMillis) {
+                        logger.error("Interrupted while waiting but finished waiting and now it is time to set " + this.znode + " to FREE. Breaking.");
                         break;
                     }
                 }
             }
             try {
+                logger.info("Restoring " + this.znode + " to FREE now.");
                 this.zk.setData(this.znode, data, -1);
             } catch (KeeperException ex) {
-                Logger.getLogger(AsyncZnodeModifier.class.getName()).log(Level.SEVERE, null, ex);
+                logger.error("Failed to restore " + this.znode + " to FREE.", ex);
             } catch (InterruptedException ex) {
-                Logger.getLogger(AsyncZnodeModifier.class.getName()).log(Level.SEVERE, null, ex);
+                logger.error("Thread interrupted while waiting for ZK to finish setting znode to FREE.", ex);
             }
         }
     }

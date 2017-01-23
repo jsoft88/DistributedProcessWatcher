@@ -274,12 +274,15 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     public void masterElected(String idOfMasterElected) {
         logger.info("Inactive Time Master with ID: " + this.masterId + ", received new master is: " + idOfMasterElected);
         this.imMaster = this.masterId.equals(idOfMasterElected);
-        if (this.imMaster) {
-            this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE));
-        }
-        
         this.shouldBindToTimeZnode = true;
         this.setWatchers();
+        
+        if (this.imMaster) {
+            logger.info("ATM now initializing " + this.requestAMWKillZkNode + "with code " + AMW_REQUEST_KILL_FREE);
+            this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE));
+        }
+        logger.info("After initializing " + this.requestAMWKillZkNode + " ATM continues...");
+        
         synchronized (this) {
             notify();
         }
@@ -646,29 +649,38 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     @Override
     public void requestAMWKillZnodeDataRead(byte[] data, boolean error) {
         if (error) {
+            logger.info("An error occurred while reading update from: " + this.requestAMWKillZkNode + ". Retrying read.");
             this.tdm.getRequestAMWKillZnodeData();
             return;
         }
         
         if (this.imMaster) {
+            logger.info("ATM is now checking content from: " + this.requestAMWKillZkNode + ".");
             String sData = Utils.requestAMWKillZnodeDataToString(data);
             if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived == 0L) {
+                logger.info(this.requestAMWKillZkNode + " has a request KILL and time is 0L. Granting permission.");
                 this.timeAMWFirstKillArrived = System.currentTimeMillis();
                 this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW));
+                logger.info("ATM is spawning thread that will clear " + this.requestAMWKillZkNode + "'s status and set it to FREE.");
                 this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE), this.intervalMillis * 2);
             } else if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived != 0L){
+                logger.info("ATM received a request to KILL AMW, however, this is not first request. Time is: " + this.timeAMWFirstKillArrived + ". Denying with DENIED.");
                 this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED));
+            } else if (sData.equals(AMW_REQUEST_KILL_FREE)) {
+                logger.info("TM just got notified that " + this.requestAMWKillZkNode + " got restored. Resetting requests' time.");
+                this.timeAMWFirstKillArrived = 0L;
             }
             //Ignores if the call is caused by a BUSY set.
+            logger.info("ATM will ignore the permission request since IMW just set it to BUSY.");
         }
     }
 
     @Override
     public void requestAMWKillZnodeDataSet(byte[] data, boolean error) {
         if (error) {
+            logger.info("An error occurred while ATM was trying to set: " + this.requestAMWKillZkNode + ". Retrying.");
             this.tdm.setRequestAMWKillZnodeData(data);
-            return;
         }
-        this.timeAMWFirstKillArrived = 0L;
+        logger.info("ATM set data of: " + this.requestAMWKillZkNode + " correctly.");
     }
 }

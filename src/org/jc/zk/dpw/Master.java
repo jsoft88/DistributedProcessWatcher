@@ -362,7 +362,7 @@ public class Master implements
                         for (String znodeInDanger : this.cmwsInDanger) {
                             this.dm.createFailoverZnode(FAILOVER_NAME_PATTERN.replace("#", znodeInDanger));
                         }*********************************************************************************/
-                        new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                        this.electNewMaster();
                     }
                     this.cmwsFailingToUpdate.clear();
                     this.cmwsFailingToUpdate.addAll(Arrays.asList(this.cmwsZnodesToListenTo));
@@ -476,7 +476,7 @@ public class Master implements
                         //It is you the one who is failing to push update, not
                         //CMWs, so kill yourself and let those kids alone.
                         logger.info("Active Master Watcher killing itself now, allowing new mastership competition.");
-                        new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                        this.electNewMaster();
                     } else {
                         //Ok, you failed to push an update because some of your
                         //CMWs fail to push updates. Create as many failovers
@@ -491,7 +491,7 @@ public class Master implements
                             this.dm.createFailoverZnode(FAILOVER_NAME_PATTERN.replace("#", znodeInDanger));
                         }**********************************************************************************/
                         logger.info("Number of CMWs that failed: " + this.cmwsInDanger.size() + ". Active Master killing itself now.");
-                        new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                        this.electNewMaster();
                     }
                 }
             } else {
@@ -519,7 +519,7 @@ public class Master implements
             } else if (this.lastUpdate - Utils.getTimeFromZnode(data) >= this.maxForgiveMeMillis) {
                 logger.info("Inactive Master Watcher noticed that Active master Watcher failed to update within time constraints. Competition for mastership begins.");
                 this.ignoreTimeTicks = true;
-                new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                this.electNewMaster();
             }
         }
     }
@@ -613,7 +613,7 @@ public class Master implements
     public void masterElected(String masterId) {
         if (masterId == null) {
             logger.info("Rebooting master election.");
-            new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+            this.electNewMaster();
             return;
         }
         logger.info("Master Elected: " + masterId + ", setting watchers.");
@@ -629,11 +629,14 @@ public class Master implements
     */
     public void electNewMaster() {
         if (!this.runningElection) {
+            logger.info("An election is not in progress, we can proceed.");
             synchronized (this) {
                 if (!this.child && this.active) {
+                    logger.info("I, as the AMW, am not allowed to compete. Thus, I kill myself.");
                     this.killSelf = true;
                     notify();
                 } else if (!this.child && !this.active){
+                    logger.info("I am an IMW, and will ask for permission to compete. " + this.amwRequestKillZnode);
                     this.runningElection = true;
                     this.dm.readAmwRequestKillZnodeData();/*
                     try {
@@ -660,6 +663,8 @@ public class Master implements
                     }*/
                 }
             }
+        } else {
+            logger.info("Election is in progress, cannot start a competition now.");
         }
     }
 
@@ -710,7 +715,7 @@ public class Master implements
         if (!this.child && !this.active) {
             synchronized (this) {
                 if (!this.runningElection) {
-                    new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                    this.electNewMaster();
                 }
             }
         } 
@@ -742,7 +747,7 @@ public class Master implements
             logger.info("Inactive Master Watcher will compete for mastership because Process Observed znode was removed.");
             synchronized (this) {
                 if (!this.runningElection) {
-                    new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                    this.electNewMaster();
                 }
             }
         }
@@ -799,7 +804,7 @@ public class Master implements
         } else if (!this.child) {
             synchronized (this) {
                 if (!this.runningElection) {
-                    new Thread(new Runnable(){@Override public void run(){ Master.this.electNewMaster(); }}).start();
+                    this.electNewMaster();
                     logger.info("Masters' Keep alive znode removed, inactive master watchers competing for mastership.");
                 } else {
                     logger.info("Masters' Keep alive znode removed, inactive master watchers already competing for mastership.");
@@ -1076,6 +1081,7 @@ public class Master implements
         }
         
         String amwZnodeData = Utils.requestAMWKillZnodeDataToString(data);
+        logger.info("Current data in " + this.amwRequestKillZnode + " is: " + amwZnodeData);
         if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_FREE)) {
             synchronized (this) {
                 if (this.runningElection) {
