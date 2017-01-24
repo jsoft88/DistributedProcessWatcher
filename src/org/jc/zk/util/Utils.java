@@ -20,6 +20,15 @@ import org.apache.commons.net.ntp.TimeInfo;
  */
 public class Utils {
     
+    //Describes a REQUEST
+    public static final String AMW_PAYLOAD_TYPE_REQUEST = "pisrq";
+    
+    public static final String AMW_PAYLOAD_TYPE_RESTORE = "pisrt";
+    
+    public static final String AMW_PAYLOAD_TYPE_INIT = "pisin";
+    
+    public static final String AMW_PAYLOAD_TYPE_RESPONSE = "pisre";
+    
     /**
      * Method in charge of retrieving time from NTP servers.
      * @param servers String array containing ip addresses of NTP servers.
@@ -347,7 +356,32 @@ public class Utils {
         return new String(data, Charset.forName("UTF-8"));
     }
     
-    public static byte[] requestAMWKillZnodeDataToBytes(String data) {
-        return data.getBytes(Charset.forName("UTF-8"));
+    public static byte[] requestAMWKillZnodeDataToBytes(String data, String type, String requester) {
+        String payload = type + ";" + data + ";" + requester;
+        return payload.getBytes(Charset.forName("UTF-8"));
+    }
+    
+    public static String getDataFromRequestAmwKillZnodeData(byte[] data) {
+        return Utils.getDataFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
+    }
+    
+    public static String getTypeFromRequestAmwKillZnodeData(byte[] data) {
+        return Utils.getTypeFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
+    }
+    
+    public static String getRequesterFromRequestAmwKillZnodeData(byte[] data) {
+        return Utils.getRequesterFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
+    }
+    
+    public static String getDataFromRequestAmwKillZnodeData(String data) {
+        return data.split(";")[1];
+    }
+    
+    public static String getTypeFromRequestAmwKillZnodeData(String data) {
+        return data.split(";")[0];
+    }
+    
+    public static String getRequesterFromRequestAmwKillZnodeData(String data) {
+        return data.split(";")[2];
     }
 }
