@@ -16,7 +16,7 @@ import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
-import org.jc.zk.Util.AsyncZnodeModifier;
+import org.jc.zk.util.AsyncZnodeModifier;
 import org.jc.zk.util.Utils;
 
 /**
