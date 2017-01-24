@@ -279,7 +279,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
         
         if (this.imMaster) {
             logger.info("ATM now initializing " + this.requestAMWKillZkNode + "with code " + AMW_REQUEST_KILL_FREE);
-            this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE));
+            this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE, Utils.AMW_PAYLOAD_TYPE_INIT, this.masterId));
         }
         logger.info("After initializing " + this.requestAMWKillZkNode + " ATM continues...");
         
@@ -654,19 +654,27 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             return;
         }
         
+        String type = Utils.getTypeFromRequestAmwKillZnodeData(data);
+        if (type.equals(Utils.AMW_PAYLOAD_TYPE_INIT) || type.equals(Utils.AMW_PAYLOAD_TYPE_RESTORE) 
+                || type.equals(Utils.AMW_PAYLOAD_TYPE_RESPONSE)) {
+            logger.info("Time Master got a type: " + type + " but we're only interested in REQUEST: " + Utils.AMW_PAYLOAD_TYPE_REQUEST);
+            return;
+        }   
+        
         if (this.imMaster) {
             logger.info("ATM is now checking content from: " + this.requestAMWKillZkNode + ".");
             String sData = Utils.requestAMWKillZnodeDataToString(data);
-            if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived == 0L) {
+            String dataPayload = Utils.getDataFromRequestAmwKillZnodeData(sData);
+            if (dataPayload.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived == 0L) {
                 logger.info(this.requestAMWKillZkNode + " has a request KILL and time is 0L. Granting permission.");
                 this.timeAMWFirstKillArrived = System.currentTimeMillis();
-                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW));
+                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
                 logger.info("ATM is spawning thread that will clear " + this.requestAMWKillZkNode + "'s status and set it to FREE.");
-                this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE), this.intervalMillis * 2);
-            } else if (sData.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived != 0L){
+                this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE, Utils.AMW_PAYLOAD_TYPE_RESTORE, this.masterId), this.intervalMillis * 2);
+            } else if (dataPayload.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived != 0L){
                 logger.info("ATM received a request to KILL AMW, however, this is not first request. Time is: " + this.timeAMWFirstKillArrived + ". Denying with DENIED.");
-                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED));
-            } else if (sData.equals(AMW_REQUEST_KILL_FREE)) {
+                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
+            } else if (dataPayload.equals(AMW_REQUEST_KILL_FREE)) {
                 logger.info("TM just got notified that " + this.requestAMWKillZkNode + " got restored. Resetting requests' time.");
                 this.timeAMWFirstKillArrived = 0L;
             }

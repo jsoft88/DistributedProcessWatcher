@@ -190,10 +190,26 @@ public class TimeDataMonitor implements
          */
         void notificationZnodeCreated();
         
+        /**
+         * Callback invoked to notify about a change under request AMW kill znode.
+         */
         void requestAMWKillZnodeChanged();
         
+        /**
+         * Callback invoked to notify TMs that data has been retrieved from 
+         * amw kill request znode.
+         * @param data byte array representing data that was retrieved from znode.
+         * @param error true if an error occurred while reading data, false otherwise.
+         */
         void requestAMWKillZnodeDataRead(byte[] data, boolean error);
         
+        /**
+         * Callback invoked to notify that amw kill request znode has been updated
+         * with the provided data.
+         * @param data byte array representing data that was written to znode.
+         * @param error true if an error occurred while setting data under znode,
+         * false otherwise.
+         */
         void requestAMWKillZnodeDataSet(byte[] data, boolean error);
     }
     
@@ -263,11 +279,17 @@ public class TimeDataMonitor implements
             this.zk.exists(this.timeZnode, this, this, null);
         }
     }
-    
+    /**
+     * Method to retrieve data from AMW kill request znode.
+     */
     public void getRequestAMWKillZnodeData() {
         this.zk.getData(this.requestAMWKillZnode, this, this, new HashMap<>());
     }
     
+    /**
+     * Method to set data under AMW kill request znode.
+     * @param data byte array representing data to be written.
+     */
     public void setRequestAMWKillZnodeData(byte[] data) {
         Map<String, String> ctx = new HashMap<>();
         ctx.put(ZNODE_TYPE, REQUEST_AMW_KILL_ZNODE);
@@ -276,6 +298,9 @@ public class TimeDataMonitor implements
         this.zk.setData(this.requestAMWKillZnode, data, -1, this, ctx);
     }
     
+    /**
+     * Method to bind temporarily to a znode.
+     */
     public void bindOnceToNotificationZnode() {
         this.zk.exists(this.timeZnodeRemovedFlagZnode, this, this, null);
     }
@@ -460,7 +485,10 @@ public class TimeDataMonitor implements
                             this.listener.updatePushedToTimeZnode(tkData, false);
                             break;
                         case REQUEST_AMW_KILL_ZNODE:
-                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartData = Utils.getDataFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartType = Utils.getTypeFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartRequester = Utils.getRequesterFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(rkPartData, rkPartType, rkPartRequester);
                             this.listener.requestAMWKillZnodeDataSet(rkData, false);
                             break;
                     }
@@ -487,7 +515,10 @@ public class TimeDataMonitor implements
                             this.listener.updatePushedToTimeZnode(tkData, true);
                             break;
                         case REQUEST_AMW_KILL_ZNODE:
-                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartData = Utils.getDataFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartType = Utils.getTypeFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            String rkPartRequester = Utils.getRequesterFromRequestAmwKillZnodeData(((HashMap<String, String>)ctx).get(TIME_PAYLOAD));
+                            byte[] rkData = Utils.requestAMWKillZnodeDataToBytes(rkPartData, rkPartType, rkPartRequester);
                             this.listener.requestAMWKillZnodeDataSet(rkData, true);
                             break;
                     }

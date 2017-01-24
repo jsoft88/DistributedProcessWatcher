@@ -55,8 +55,6 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
     
     private final String amwRequestKillZnode;
     
-    private final LinkedList<DataMonitorListenerMaster> killRequestListenersQueue;
-    
     private static final String AMW_REQUEST_KILL_NODE = "amwrkn";
     
     //Context key to store the MW requesting an operation.
@@ -136,7 +134,6 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
         this.processHeartBeatZnode = processHeartBeatZnode;
         this.isActiveMaster = false;
         this.amwRequestKillZnode = amwRequestKillZnode;
-        this.killRequestListenersQueue = new LinkedList<>();
     }
     
     public interface DataMonitorListenerMaster {
@@ -327,10 +324,27 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
          */
         void updateZnodeCreatedByMaster(String znode, byte[] data, boolean error);
         
+        /**
+         * Callback invoked to notify about the result of setting data under 
+         * AMW request kill znode.
+         * @param data byte array representing the data to be written.
+         * @param error boolean indicating whether an error occurred or not
+         * while writing to znode.
+         */
         void amwRequestKillZnodeUpdated(byte[] data, boolean error);
         
+        /**
+         * Callback invoked to notify MW about a change in AMW kill request
+         * znode.
+         */
         void amwRequestKillZnodeChanged();
         
+        /**
+         * Callback invoked to notify MW that data has been retrieved from AMW
+         * kill request znode.
+         * 
+         * @param data byte array representing the data that was read from znode.
+         */
         void dataReadFromAmwRequestKillZnode(byte[] data);
     }
     
@@ -360,6 +374,7 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                     this.zk.exists(znForUpdate, this, this, null);
                 }
             }
+            //Bind to AMW kill request znode.
             this.zk.exists(this.amwRequestKillZnode, this, this, null);
         }
         this.zk.exists(this.znodeTime, this, this, null);
@@ -553,12 +568,19 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
         this.zk.getData(path, this, this, ctx);
     }
     
+    /**
+     * Method to retrieve data from AMW kill request znode.
+     */
     public void readAmwRequestKillZnodeData() {
         Map<String, String> ctx = new HashMap<>();
         ctx.put(ZNODE_TYPE, AMW_REQUEST_KILL_NODE);
         this.zk.getData(this.amwRequestKillZnode, this, this, ctx);
     }
     
+    /**
+     * Method invoked to write data to AMW kill request znode.
+     * @param data byte array representing data to be written to znode.
+     */
     public void setAmwRequestKillZnodeData(byte[] data) {
         Map<String, String> ctx = new HashMap<>();
         ctx.put(ZNODE_TYPE, AMW_REQUEST_KILL_NODE);
@@ -584,13 +606,7 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                 } else if (this.znodeToCreateForUpdates != null && this.znodeToCreateForUpdates.equals(event.getPath())) {
                     this.bindToZnodes(this.isActiveMaster);
                 } else if (path.equals(this.amwRequestKillZnode)) {
-                    //Synchronize on the queue which stores the listeners in order.
-                    synchronized (this.killRequestListenersQueue) {
-                        if (!this.killRequestListenersQueue.isEmpty()) {
-                            DataMonitorListenerMaster aListener = this.killRequestListenersQueue.remove(0);
-                            aListener.amwRequestKillZnodeChanged();
-                        }
-                    }
+                    this.listener.amwRequestKillZnodeChanged();
                 }
                 break;
             case None:
@@ -691,11 +707,11 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                             //Everything went fine, nothing to do.
                             break;
                         case AMW_REQUEST_KILL_NODE:
-                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartData = Utils.getDataFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartType = Utils.getTypeFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartRequester = Utils.getRequesterFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(amwPartData, amwPartType, amwPartRequester);
                             this.listener.amwRequestKillZnodeUpdated(amwData, false);
-                            synchronized (this.killRequestListenersQueue) {
-                                this.killRequestListenersQueue.addLast(this.listener);
-                            }
                             break;
                     }
                 }
@@ -721,7 +737,10 @@ public class DataMonitor implements Watcher, AsyncCallback.StatCallback, AsyncCa
                             this.setChildMasterWatcherZnode(Utils.childMasterWatcherDataToBytes(mCtx.get(ZNODE_PAYLOAD)));
                             break;
                         case AMW_REQUEST_KILL_NODE:
-                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartData = Utils.getDataFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartType = Utils.getTypeFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            String amwPartRequester = Utils.getRequesterFromRequestAmwKillZnodeData(mCtx.get(ZNODE_PAYLOAD));
+                            byte[] amwData = Utils.requestAMWKillZnodeDataToBytes(amwPartData, amwPartType, amwPartRequester);
                             this.listener.amwRequestKillZnodeUpdated(amwData, true);
                             break;
                     }

@@ -1080,19 +1080,52 @@ public class Master implements
             return;
         }
         
+        //Active master does not need to worry about being granted permission.
+        if (!this.child && this.active) {
+            return;
+        }
+        
+        //What has been written to znode.
         String amwZnodeData = Utils.requestAMWKillZnodeDataToString(data);
+        //Type of data that was written to znode.
+        String type = Utils.getTypeFromRequestAmwKillZnodeData(amwZnodeData);
+        //If it is of type RESTORE or REQUEST, ignore.
+        if (type.equals(Utils.AMW_PAYLOAD_TYPE_RESTORE)
+                || type.equals(Utils.AMW_PAYLOAD_TYPE_REQUEST)) {
+            logger.info("Received a payload type: " + type + ", but we're only interested in RESPONSE: " + Utils.AMW_PAYLOAD_TYPE_RESPONSE);
+            return;
+        }
+        //To whom the permission is granted.
+        String toWhom = Utils.getRequesterFromRequestAmwKillZnodeData(amwZnodeData);
+        //Note that we need to make sure that this is a RESPONSE, because the thread
+        //gets notified about REQUEST events as well.
+        if (!toWhom.equals(this.masterIdentifier) && type.equals(Utils.AMW_PAYLOAD_TYPE_RESPONSE)) {
+            logger.info("I'm not requester of permission to kill AMW. I am: " + this.masterIdentifier + ", requester is: " + toWhom);
+            return;
+        }
         logger.info("Current data in " + this.amwRequestKillZnode + " is: " + amwZnodeData);
-        if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_FREE)) {
+        //Finally, extract payload.
+        String dataPayload = Utils.getDataFromRequestAmwKillZnodeData(amwZnodeData);
+        
+        //We shall continue verifying the granted permission only if it is a response,
+        //or if we need to see which MW will be the next AMW and this IMW is the
+        //first one to request for permission. If it is the first one to request 
+        //permission, TYPE of content in znode might be INIT or RESTORE. Those
+        //are valid statuses only if running election, otherwise, when MWs get
+        //notified about it, they must ignore it.
+        boolean continuePermissionCheck = type.equals(Utils.AMW_PAYLOAD_TYPE_RESPONSE) || 
+                (this.runningElection && (type.equals(Utils.AMW_PAYLOAD_TYPE_INIT) || type.equals(Utils.AMW_PAYLOAD_TYPE_RESTORE)));
+        if (continuePermissionCheck && dataPayload.equals(TimeMaster.AMW_REQUEST_KILL_FREE)) {
             synchronized (this) {
                 if (this.runningElection) {
                     logger.info("AMW request znode status is FREE. IMW is allowed to request a new master.");
-                    this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL));
+                    this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL, Utils.AMW_PAYLOAD_TYPE_REQUEST, this.masterIdentifier));
                 } else {
                     logger.info("MW just got notified about initialization of kill request znode.");
                 }
             }
-        } else if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_CODE_ALLOW)) {
-            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_BUSY));
+        } else if (continuePermissionCheck && dataPayload.equals(TimeMaster.AMW_REQUEST_KILL_CODE_ALLOW)) {
+            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_BUSY, Utils.AMW_PAYLOAD_TYPE_REQUEST, this.masterIdentifier));
             logger.info("IMW is allowed to remove znodes and will become the next AMW. Current ITM id is: " + this.masterIdentifier);
             this.dm.removeZnode(this.zkTimeNode);
             this.dm.removeZnode(this.zkMasterStatusNode);
@@ -1112,8 +1145,8 @@ public class Master implements
                             Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, this.ntpServers));
                 }
             }
-        } else if (amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_CODE_DENIED) 
-                || amwZnodeData.equals(TimeMaster.AMW_REQUEST_KILL_BUSY)) {
+        } else if (continuePermissionCheck && (dataPayload.equals(TimeMaster.AMW_REQUEST_KILL_CODE_DENIED) 
+                || dataPayload.equals(TimeMaster.AMW_REQUEST_KILL_BUSY))) {
             this.cdl = new CountDownLatch(1);
             while (true) {
                 try {
@@ -1125,7 +1158,7 @@ public class Master implements
                         logger.info("IMW never got notified about new AMW, that is, no time znode was created.");
                         if (this.runningElection) {
                             logger.info("IMW was expecting to compete for new AMW to be elected, but time znode was never created. Requesting permission to kill AMW now.");
-                            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL));
+                            this.dm.setAmwRequestKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(TimeMaster.AMW_REQUEST_KILL_CODE_KILL, Utils.AMW_PAYLOAD_TYPE_REQUEST, this.masterIdentifier));
                         } else {
                             logger.error("IMW was waiting for time znode to be added by new AMW, but never happened. Also, it was not running election... is that even possible??");
                         }
