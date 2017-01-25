@@ -352,35 +352,125 @@ public class Utils {
         return new String(data, Charset.forName("UTF-8"));
     }
     
+    /**
+     * Method to encode AMW Kill Request znode's data as String.
+     * @param data byte array representing the data to be encoded as String.
+     * @return the UTF-8 encoded String.
+     */
     public static String requestAMWKillZnodeDataToString(byte[] data) {
         return new String(data, Charset.forName("UTF-8"));
     }
     
+    /**
+     * Method to create a ZooKeeper compliant data.
+     * @param data this is a String representing the possible states of AMW Kill 
+     * Request znode: {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_BUSY},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_ALLOW},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_DENIED},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_KILL},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_FREE}
+     * 
+     * @param type String representing what type of update will be pushed. See
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_INIT},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_REQUEST},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESPONSE},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESTORE}
+     * 
+     * @param requester String representing the identifier of the Master
+     * requesting permission to kill AMW or the Master authorizing/denying/initializing
+     * AMW Kill Request znode.
+     * 
+     * @return byte array representing the data to be set under AMW Kill Request
+     * znode.
+     */
     public static byte[] requestAMWKillZnodeDataToBytes(String data, String type, String requester) {
         String payload = type + ";" + data + ";" + requester;
         return payload.getBytes(Charset.forName("UTF-8"));
     }
     
+    /**
+     * Method to get Data part from data extracted or to be written to AMW Kill
+     * request znode. Data part as in {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_BUSY},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_ALLOW},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_DENIED},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_KILL},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_FREE}
+     * 
+     * @param data byte array representing znode's data.
+     * 
+     * @return String representing Data part.
+     */
     public static String getDataFromRequestAmwKillZnodeData(byte[] data) {
         return Utils.getDataFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
     }
     
+    /**
+     * Method to retrieve the Type part from data extracted or to be written to AMW Kill
+     * request znode. Type part as in {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_INIT},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_REQUEST},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESPONSE},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESTORE}
+     * 
+     * @param data byte array representing znode's data.
+     * @return String representing Type part.
+     */
     public static String getTypeFromRequestAmwKillZnodeData(byte[] data) {
         return Utils.getTypeFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
     }
     
+    /**
+     * Method to retrieve Requester part from data extracted or to be written to AMW Kill
+     * request znode.
+     * 
+     * @param data byte array representing znode's data.
+     * @return String representing the identifier of the Master
+     * requesting permission to kill AMW or the Master authorizing/denying/initializing
+     * AMW Kill Request znode.
+     */
     public static String getRequesterFromRequestAmwKillZnodeData(byte[] data) {
         return Utils.getRequesterFromRequestAmwKillZnodeData(Utils.requestAMWKillZnodeDataToString(data));
     }
     
+    /**
+     * Method to get Data part from data extracted or to be written to AMW Kill
+     * request znode. Data part as in {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_BUSY},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_ALLOW},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_DENIED},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_CODE_KILL},
+     * {@link org.jc.zk.dpw.TimeMaster#AMW_REQUEST_KILL_FREE}
+     * 
+     * @param data String-encoded znode's data.
+     * 
+     * @return String representing Data part.
+     */
     public static String getDataFromRequestAmwKillZnodeData(String data) {
         return data.split(";")[1];
     }
     
+    /**
+     * Method to retrieve the Type part from data extracted or to be written to AMW Kill
+     * request znode. Type part as in {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_INIT},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_REQUEST},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESPONSE},
+     * {@link org.jc.zk.util.Utils#AMW_PAYLOAD_TYPE_RESTORE}
+     * 
+     * @param data byte array representing znode's data.
+     * 
+     * @return String representing Type part.
+     */
     public static String getTypeFromRequestAmwKillZnodeData(String data) {
         return data.split(";")[0];
     }
     
+    /**
+     * Method to retrieve Requester part from data extracted or to be written to AMW Kill
+     * request znode.
+     * 
+     * @param data byte array representing znode's data.
+     * @return String representing the identifier of the Master
+     * requesting permission to kill AMW or the Master authorizing/denying/initializing
+     * AMW Kill Request znode.
+     */
     public static String getRequesterFromRequestAmwKillZnodeData(String data) {
         return data.split(";")[2];
     }
