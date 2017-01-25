@@ -4,7 +4,7 @@
 <p>We'd need at least a program monitoring changes to the file and later send this changes to hadoop. Flume would be an useful tool since with an Exec source, we could tail -F the file, send them through a memory channel and use a hdfs sink to persist data. If for some reason (and this is just an example) flume dies, we're gonna stop getting data from the log. With this Process Watcher, we can easily achieve automatic re-deploy of flume and keep getting data from the log.</p><br/>
 
 <b>How does it work?</b>
-<p>It comprises three main components: time masters (TM), master watchers (parent: MW and child: CMW) and process wrappers (PW). There's some sort of hierarchy amongst these components, in the sense that MWs rely on TMs to work, CMWs rely on MWs for coordination and on PWs for spawning processes. In order to achieve coordination and synchronization, all components depend on <a href="https://zookeeper.apache.org/">Apache ZooKeeper</a>. TMs and MWs have an <b>autonomous Active Master (ATM or AMW) election</b> feature, that is, they compete against each other to see which TM or MW becomes the next ATM or AMW. The rest of the masters are inactive masters (ITM or IMW). Now, ITMs and IMWs have to monitor that the current ATM or AMW is online and that it is doing its job. If for any reason, an ATM or AMW stops responding (that is, reporting its health status to its peers inactive masters), inactive masters will start a new competition after following a <a href="#sdp">Safety Deletion Policy</a>, to see which ITM or IMW is the next active master.</p>
+<p>It comprises three main components: time masters (TM), master watchers (parent: MW and child: CMW) and process wrappers (PW). There's some sort of hierarchy amongst these components, in the sense that MWs rely on TMs to work, CMWs rely on MWs for coordination and on PWs for spawning processes. In order to achieve coordination and synchronization, all components depend on <a href="https://zookeeper.apache.org/">Apache ZooKeeper</a>. TMs and MWs have an <b>autonomous Active Master (ATM or AMW) election</b> feature, that is, they compete against each other to see which TM or MW becomes the next ATM or AMW. The rest of the masters are inactive masters (ITM or IMW). Now, ITMs and IMWs have to monitor that the current ATM or AMW is online and that it is doing its job. If for any reason, an ATM or AMW stops responding (that is, reporting its health status to its peers inactive masters), inactive masters will start a new competition after following a <a href="#sdp">Safety Deletion Policy (for Time Masters)</a> or <a href="#sdpmw">Safety Deletion Policy (for Master Watchers)</a>, to see which ITM or IMW is the next active master.</p>
 <p><i>Components explained</i></p>
 <ul>
   <li><b>Time Masters:</b> Top level masters requesting time from NTP servers and providing them to lower level components. Competition for active mastership consists of creating a time znode, and the instance that manages to create this instance becomes the ATM. When deploying TMs, the user must indicate two znodes. The first one called <i>time znode</i> (AKA time masters' keep alive znode), where ATM pushes heartbeat according to the time interval provided, and ITMs verify that it is pushing heartbeats within specified threshold. The other znode is called <i>znode for time listeners</i>, used by lower level masters to get time. For high availability, deploy TMs in diferent servers.<br/>
@@ -22,7 +22,7 @@ Additionaly, there's a currently unused flag, which indicates whether the CMW is
 <b>Arguments for each Master</b>
 <ul>
   <li><b>Time Master:</b> Use the class org.jc.zk.dpw.TimeHandlerMain for launching an instance of TM with the following arguments.<br/>
-  <b>/path/to/java -cp /path/to/DPW.jar org.jc.zk.dpw.TimeHandlerMain uniqueIdentifier zkHost zkPort zkTimeNode zkTimeListenersNode intervalMillis ntpserver1,ntpserver2</b><br/>
+  <b>/path/to/java -cp /path/to/DPW.jar org.jc.zk.dpw.TimeHandlerMain uniqueIdentifier zkHost zkPort zkTimeNode zkTimeListenersNode intervalMillis ntpserver1,ntpserver2 amwKillZnode</b><br/>
   <ul>
   <li>uniqueIdentifier: unique identifier for the TM.</li>
   <li>zkHost: Zookeeper host ip address.</li>
@@ -31,9 +31,10 @@ Additionaly, there's a currently unused flag, which indicates whether the CMW is
   <li>zkTimeListenersNode: ZooKeeper znode for time listeners, where ATM will push time ticks.</li>
   <li>intervalMillis: time interval in milliseconds between time ticks. This should be large enough to cover the 2 level updates mentioned earlier, that is, PW to CMW and CMW to AMW.</li>
   <li>ntpserver1,ntpserver2: list of NTP servers separated by comma.</li>
+  <li>amwKillZnode: pre-existing znode that IMWs will use to request permission to kill an inactive AMW.</li>
   </ul></li>
   <li><b>Master Watcher:</b> Use the class org.jc.zk.dpw.MasterWatcherHandlerMain for launching an instanc of MW with the following arguments.<br/>
-  <b>/path/to/java -cp /path/to/DPW.jar org.jc.zk.dpw.MasterWatcherHandlerMain uniqueId zkHost zkPort zkTimeListenerZnode zkKeepAliveZnode zkProcessObservedZnode /absolute/path/program/to/run arg1,arg2,...,argn isChild isActiveChild numberOfChildren intervalToWaitForUpdate childUpdateZnode1,childUpdateZnode2... znodeToCreateForUpdate ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis</b><br/>
+  <b>/path/to/java -cp /path/to/DPW.jar org.jc.zk.dpw.MasterWatcherHandlerMain uniqueId zkHost zkPort zkTimeListenerZnode zkKeepAliveZnode zkProcessObservedZnode /absolute/path/program/to/run arg1,arg2,...,argn isChild isActiveChild numberOfChildren intervalToWaitForUpdate childUpdateZnode1,childUpdateZnode2... znodeToCreateForUpdate ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis amwKillZnode</b><br/>
   <ul>
   <li>uniqueId: unique identifier for this instance of MW.</li>
   <li>zkHost: Zookeeper host ip address.</li>
@@ -53,16 +54,26 @@ Additionaly, there's a currently unused flag, which indicates whether the CMW is
   <li>idOfParentMasterWatcher: identifier of the MW a CMW is linked to. If this refers to an instance of MW, this value matches its <b>uniqueId</b>.</li>
   <li>maxForgiveMeMillis: how many milliseconds will IMWs wait before competing for a new election after the current AMW fails to update multiple times. This should be larger than <b>time ticks interval</b> used for TMs.</li>
   <li>hardKillScript: provide a combination of command plus script to hard kill processes. This is necessary if you consider that a process.destroy() won't suffice. This script will be executed when the active CMW is told to kill itself.</li>  
+  <li>amwKillZnode: pre-existing znode that IMWs use to request permission to kill inactive AMW and also to check whether they got permission or not.</li>
   </ul></li>
 </ul><br/>
-<b id="sdp">Safety Deletion Policy</b>
-<p>Before proceeding to a competition for new active TM or MW, inactive TMs or MWs must follow a safety deletion policy:</p>
+
+<b id="sdp">Safety Deletion Policy (for Time Masters)</b>
+<p>Before proceeding to a competition for new active TM, inactive TMs must follow a safety deletion policy:</p>
 <ul>
   <li>Masters must wait a specified amount of milliseconds before proceeding to the creation of a notification znode.</li>
   <li>Only masters that finished waiting and still have time to create notification znode, can participate in the competition.</li>
   <li>The only master that managed to create the notification znode, is the next active master.</li>
   <li>Masters that did not compete for creating notification znode, just wait until allowed-to-compete masters finish competition.</li>
   </ul><br/>
-  <b>Why is there a need of a Safety Deletion Policy?</b>
-  <p>Even though znodes are automatically removed when a client disconnects, we cannot always assume that once an ATM or AMW stops responding, it will also disconnect from ZooKeeper. So this deletion policy, forces ITMs or IMWs to verify whether a critical znode for the correct operation of the library has been removed before proceeding to compete for a new ATM or AMW. Imagine that there are 3 MWs: mw1, mw2 and mw3; and mw1 stops responding but it does not disconnect from ZooKeeper. Znode for time listeners and keep alive znode continue to exist, but mw2 is the first MW to detect that current AMW is failing to update within time. So, if they do not follow the deletion policy, and they just remove existing znodes before re-creating those 2 critical znodes for the operation of MWs, mw3 might delete the znode that mw2 created seconds before it also detected that mw1 was failing to update, and this would lead to a new unnecessary competition, discarding an IMW that could have kept the system running if 2 MWs were gone. </p>
-  <p>So, by following the safety policy, we avoid having situations where unnecessary competitions take place and things continue to work as expected.</p>
+
+<b> id="sdpmw">Safety Deletion Policy (for Master Watchers)</b>
+<p>When IMWs detect that current AMW is not responding on time, they have to find a new AMW that will keep processes
+running. Unlike TMs, IMWs must request for permission to proceed with a competition (and thus, permission to kill AMW).
+Permission can be granted by the current ATM, and the first thing an IMW does is check what the current status of AMW kill request znode is.
+If it is FREE, it requests permission to kill AMW and become the next AMW. If the ATM grants permission, it sets the znode
+to BUSY and proceeds to become the new ATM. After a while, ATM restores the status of AMW kill request znode and sets it back to FREE.</p>
+
+<b>Why is there a need of a Safety Deletion Policy?</b>
+<p>Even though znodes are automatically removed when a client disconnects, we cannot always assume that once an ATM or AMW stops responding, it will also disconnect from ZooKeeper. So this deletion policy, forces ITMs or IMWs to verify whether a critical znode for the correct operation of the library has been removed before proceeding to compete for a new ATM or AMW. Imagine that there are 3 MWs: mw1, mw2 and mw3; and mw1 stops responding but it does not disconnect from ZooKeeper. Znode for time listeners and keep alive znode continue to exist, but mw2 is the first MW to detect that current AMW is failing to update within time. So, if they do not follow the deletion policy, and they just remove existing znodes before re-creating those 2 critical znodes for the operation of MWs, mw3 might delete the znode that mw2 created seconds before it also detected that mw1 was failing to update, and this would lead to a new unnecessary competition, discarding an IMW that could have kept the system running if 2 MWs were gone. </p>
+<p>So, by following the safety policy, we avoid having situations where unnecessary competitions take place and things continue to work as expected.</p>
