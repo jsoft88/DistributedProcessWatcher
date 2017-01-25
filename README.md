@@ -67,7 +67,7 @@ Additionaly, there's a currently unused flag, which indicates whether the CMW is
   <li>Masters that did not compete for creating notification znode, just wait until allowed-to-compete masters finish competition.</li>
   </ul><br/>
 
-<b> id="sdpmw">Safety Deletion Policy (for Master Watchers)</b>
+<b id="sdpmw">Safety Deletion Policy (for Master Watchers)</b>
 <p>When IMWs detect that current AMW is not responding on time, they have to find a new AMW that will keep processes
 running. Unlike TMs, IMWs must request for permission to proceed with a competition (and thus, permission to kill AMW).
 Permission can be granted by the current ATM, and the first thing an IMW does is check what the current status of AMW kill request znode is.
