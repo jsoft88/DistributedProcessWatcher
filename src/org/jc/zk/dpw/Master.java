@@ -112,6 +112,8 @@ public class Master implements
     
     private final String amwRequestKillZnode;
     
+    private final long waitTimeBeforeHardKillExec;
+    
     private static final int MAX_HEARTBEAT_MISS = 3;
     
     //private static final long MAX_CHECKUP_MISS = 95000L;
@@ -149,6 +151,7 @@ public class Master implements
             long maxForgiveMeMillis,
             String hardKillScript,
             String amwRequestKillZnode,
+            long waitTimeBeforeHardKillExec,
             String[] cmwsZnodesToListenTo,
             String zkNodeToCreateForUpdate,
             String[] ntpServers) throws IOException, Exception {
@@ -211,6 +214,7 @@ public class Master implements
         this.itmWaitCountdown = new CountDownLatch(1);
         this.maxForgiveMeMillis = maxForgiveMeMillis;
         this.hardKillScript = hardKillScript;
+        this.waitTimeBeforeHardKillExec = waitTimeBeforeHardKillExec;
     }
 
     @Override
@@ -541,20 +545,30 @@ public class Master implements
 
     public void childMasterWatcherSleep() {
         if (this.child && this.activeChild && this.p != null) {
+            this.closing(0);
+            logger.info("Child Master Watcher was told to destroy its process and wait.");
+            logger.info("CMW now telling process wrappers to destroy themselves.");
             byte[] hbkillData = Utils.processHeartBeatDataToBytes(ProcessWrapper.FLAG_KILLSELF);
             this.dm.createProcessHeartBeatZnode(this.heartBeatZnode, hbkillData);
+            logger.info("CMW will now wait " + this.waitTimeBeforeHardKillExec + " millis before executing hard kill script.");
             synchronized (this) {
                 try {
-                    wait(8000L);
+                    wait(this.waitTimeBeforeHardKillExec);
                 } catch (InterruptedException ex) {
                     logger.error("CMW interrupted while waiting grace period before destroying ProcessWrapper", ex);
                 }
             }
-            logger.info("Child Master Watcher was told to destroy its process and wait.");
+            
             this.p.destroy();
             //Assemble hard kill script
+            if (this.hardKillScript == null) {
+                logger.info("No hard kill script has been provided.");
+                return;
+            }
+            
             ProcessBuilder kpb = new ProcessBuilder(this.hardKillScript.split("\\s"));
             try {
+                logger.info("Executing hard kill script: " + kpb.toString());
                 Process kp = kpb.start();
                 ProcessStreamConsumer scInfo = new ProcessStreamConsumer(kp.getInputStream(), logger);
                 ProcessStreamConsumer scError = new ProcessStreamConsumer(kp.getErrorStream(), logger);
@@ -575,9 +589,9 @@ public class Master implements
                 } else if (ex instanceof InterruptedException) {
                     logger.error("CMW interrupted while waiting for hard kill script to complete. Best effort kill in progress, that is, no way of knowing if things went well.");
                 }
-            } finally {
+            } /*finally {
                 this.closing(0);
-            }
+            }*/
         }
     }
 

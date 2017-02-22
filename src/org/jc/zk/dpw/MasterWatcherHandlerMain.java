@@ -20,12 +20,12 @@ public class MasterWatcherHandlerMain {
     
     public static void main(String[] args) throws Exception {
         
-        if (args == null || args.length < 19) {
+        if (args == null || args.length < 20) {
             System.out.println("Invoke: hadoop jar /path/to/DPW.jar org.jc.zk.dpw.MasterWatcherHandlerMain " + 
                     "uniqueId zkHost zkPort zkTimeListenerZnode zkKeepAliveZnode zkProcessObservedZnode " +
                     "/absolute/path/program/to/run arg1,arg2,...,argn isChild isActiveChild numberOfChildren " +
                     "intervalToWaitForUpdate childUpdateZnode1,childUpdateZnode2... znodeToCreateForUpdate " + 
-                    "ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis hardKillScript amwKillZnode");
+                    "ntpServer1,ntpServer2 idOfParentMasterWatcher maxForgiveMeMillis hardKillScript amwKillZnode hardKillScriptWaitMillis");
             System.out.println("------------------");
             System.out.println("Common args");
             System.out.println("------------------");
@@ -37,6 +37,7 @@ public class MasterWatcherHandlerMain {
             System.out.println("zkProcessObservedZnode: znode to signal Child Master Watchers to deploy processes");
             System.out.println("ntpServer1,ntpServer2: List of NTP servers separated by comma");
             System.out.println("maxForgiveMeMillis: the number of milliseconds IMWs will forgive ATM lack of updates. This should be greater than TMs interval millis.");
+            System.out.println("hardKillScriptWaitMillis: number of milliseconds to wait before executing hard kill script. DEFAULT: 10000 milliseconds.");
             System.out.println("---------------------------------");
             System.out.println("When launching a master watcher:");
             System.out.println("---------------------------------");
@@ -114,6 +115,8 @@ public class MasterWatcherHandlerMain {
             amwKillRequestZnode = null;
         }
         
+        String waitHardKillExec = args[19].trim();
+        
         ExecutorService es = Executors.newFixedThreadPool(1);
         
         Master m = new Master(
@@ -133,6 +136,7 @@ public class MasterWatcherHandlerMain {
                 Long.parseLong(maxForgiveMeMillis),
                 hardKillScript,
                 amwKillRequestZnode,
+                Math.max(Long.parseLong(waitHardKillExec), 10000),
                 znodesForUpdate, 
                 znodeToCreateForUpdate, 
                 ntpServers);
