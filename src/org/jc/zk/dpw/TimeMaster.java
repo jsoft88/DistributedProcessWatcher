@@ -10,6 +10,8 @@ import java.util.concurrent.CountDownLatch;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.jc.zk.util.AsyncResponseConsumer;
+import org.jc.zk.util.AuthorizationQueue;
 import org.jc.zk.util.Utils;
 
 /**
@@ -82,6 +84,8 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
     
     public static final String AMW_REQUEST_KILL_BUSY = "busy";
     
+    public static final long FIXED_AUTHORIZATION_WAIT_TIME = 600000L;
+    
     private static final Logger logger = Logger.getLogger(TimeMaster.class);
     
     public TimeMaster (
@@ -150,7 +154,8 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             this.tdm.createTimeZnode(
                     Utils.generateDataForTimeZnode(
                             this.masterId, 
-                            this.lastUpdate, 
+                            this.lastUpdate,
+                            false,
                             this.ntpServers));
             synchronized (this) {
                 logger.info("Waiting for Time Masters' Keep alive creation to be finished.");
@@ -371,6 +376,16 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             }
         } else {
             if (this.imMaster) {
+                synchronized (this) {
+                    if (this.timeAMWFirstKillArrived != 0L) {
+                        logger.info("Active Time Master successfully pushed an update to keep alive znode, but an election is in progress for a new AMW, so ATM will not push an update to time listeners' znode.");
+                        this.lastUpdate = Utils.getTimeFromTimeZnode(data);
+                        this.cummulativeTime = 0L;
+                        logger.info("New lastUpdate is: " + this.lastUpdate);
+                        notify();
+                        return;
+                    }
+                }
                 logger.info("Active Time Master successfully pushed an update to keep alive znode, now writing update to time listeners znode.");
                 this.tdm.writeTimeForProcessMasters(data);
             }
@@ -379,14 +394,14 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
 
     @Override
     public void retrievedTimeZnodeLastUpdate(byte[] data, boolean error) {
+        if (error) {
+            //Get data to verify active master.
+            logger.info("Time Master was waiting for data from Keep alive znode to come from zk, but an error occurred. Retrying.");
+            this.tdm.getDataFromTimeZnode();
+            return;
+        }
+        
         if (this.waitingToPushUpdate) {
-            if (error) {
-                //Get data to verify active master.
-                logger.info("Active Time Master was waiting for data from Keep alive znode to come from zk, but an error occurred. Retrying.");
-                this.tdm.getDataFromTimeZnode();
-                return;
-            }
-            
             this.waitingToPushUpdate = false;
             
             long time;
@@ -412,6 +427,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
                 this.tdm.updateZNode(Utils.generateDataForTimeZnode(
                                     this.masterId, 
                                     time,
+                                    false,
                                     this.ntpServers));
                 this.lastUpdate = time;
             } else  {
@@ -426,7 +442,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
                 
                     if ((time - this.lastUpdate) >= this.maxUpdateMiss) {
                         //Verify if this master should remain active.
-                        logger.info("Active Time Master failed to push an update within time constraints. It is no longer active master.");
+                        logger.info("Active Time Master failed to push an update within time constraints. It is no longer active master. Timediff is:" + (time - this.lastUpdate));
                         this.noLongerMaster();
                         synchronized (this) {
                             notify();
@@ -434,13 +450,26 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
                     } else {
                         //Now push an update to let ITMs know that you're still an active master.
                         logger.info("Pushing update to keep alive znode. Time: " + time);
-                        this.tdm.updateZNode(
-                                    Utils.generateDataForTimeZnode(
-                                            this.masterId, 
-                                            time,
-                                            this.ntpServers));
+                        synchronized (this) {
+                            this.tdm.updateZNode(
+                                        Utils.generateDataForTimeZnode(
+                                                this.masterId, 
+                                                time,
+                                                this.timeAMWFirstKillArrived != 0L,
+                                                this.ntpServers));
+                        }
                     }
                 }
+            }
+        } else if (!this.imMaster) {
+            logger.info("IMWs have to verify whether the ATM is pushing an update to time listeners or not. If it is not, they must update their inner clock now and must not wait for time listeners' znode to be updated.");
+            if (Utils.imwMustUpdateInnerClock(data)) {
+                synchronized (this) {
+                    this.lastUpdate = Utils.getTimeFromTimeZnode(data);
+                    logger.info("IMWs updating inner clock now. Time is: " + this.lastUpdate);
+                }
+            } else {
+                logger.info("IMWs do not need to update inner clock now, ATM is pushing an update to time listeners.");
             }
         }
     }
@@ -502,7 +531,11 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
         this.setWatchers();
         logger.info("Keep Alive znode changed.");
         //If time znode changed, ITMs don't need to do anything else. They just
-        //update their inner clock once the timeListenersZnode changes.
+        //update their inner clock once the timeListenersZnode changes. Verify
+        //UPDATE: Since the inclusion of a new field in masters znode payload,
+        //IMWs must verify update to update the inner clock if the master is not
+        //pushing an update to time listeners znode.
+        this.tdm.getDataFromTimeZnode();
     }
 
     @Override
@@ -547,7 +580,12 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
         logger.info("Time Listeners znode removed.");
         this.shouldBindToTimeZnode = true;
         this.setWatchers();
-        this.stopTimeTick();
+        if (this.timeAMWFirstKillArrived == 0L) {
+            logger.info("An election is not in progress stopping time tick.");
+            this.stopTimeTick();
+        } else {
+            logger.info("An election is in progress ignoring removal of time listeners' znode.");
+        }
     }
 
     @Override
@@ -579,7 +617,7 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             this.setWatchers();
             this.startTimeTick();
         } else {
-            logger.info("Re-binding to Time listeners znode.");
+            logger.info("Re-binding to Time listeners znode or election is finished.");
         }
     }
 
@@ -648,6 +686,8 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
 
     @Override
     public void requestAMWKillZnodeDataRead(byte[] data, boolean error) {
+        final Object innerLock = new Object();
+        
         if (error) {
             logger.info("An error occurred while reading update from: " + this.requestAMWKillZkNode + ". Retrying read.");
             this.tdm.getRequestAMWKillZnodeData();
@@ -655,6 +695,12 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
         }
         
         String type = Utils.getTypeFromRequestAmwKillZnodeData(data);
+        if (type.equals(Utils.AMW_PAYLOAD_TYPE_RESTORE) && Utils.getDataFromRequestAmwKillZnodeData(data).equals(AMW_REQUEST_KILL_FREE)) {
+            logger.info("TM just got notified that " + this.requestAMWKillZkNode + " got restored. Resetting requests' time.");
+            this.timeAMWFirstKillArrived = 0L;
+            return;
+        }
+        
         if (type.equals(Utils.AMW_PAYLOAD_TYPE_INIT) || type.equals(Utils.AMW_PAYLOAD_TYPE_RESTORE) 
                 || type.equals(Utils.AMW_PAYLOAD_TYPE_RESPONSE)) {
             logger.info("Time Master got a type: " + type + " but we're only interested in REQUEST: " + Utils.AMW_PAYLOAD_TYPE_REQUEST);
@@ -665,15 +711,26 @@ public class TimeMaster implements Watcher, Runnable, TimeDataMonitor.TMInterfac
             logger.info("ATM is now checking content from: " + this.requestAMWKillZkNode + ".");
             String sData = Utils.requestAMWKillZnodeDataToString(data);
             String dataPayload = Utils.getDataFromRequestAmwKillZnodeData(sData);
+            
+            if (this.timeAMWFirstKillArrived == 0L) {
+                logger.info("Spawning response's consumer thread.");
+                AsyncResponseConsumer arc = new AsyncResponseConsumer(FIXED_AUTHORIZATION_WAIT_TIME, this.tdm);
+                
+                new Thread(arc).start();
+            }
+            
             if (dataPayload.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived == 0L) {
                 logger.info(this.requestAMWKillZkNode + " has a request KILL and time is 0L. Granting permission.");
                 this.timeAMWFirstKillArrived = System.currentTimeMillis();
-                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
+                AuthorizationQueue.enqueueResponse(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
+                //this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_ALLOW, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
                 logger.info("ATM is spawning thread that will clear " + this.requestAMWKillZkNode + "'s status and set it to FREE.");
-                this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE, Utils.AMW_PAYLOAD_TYPE_RESTORE, this.masterId), this.intervalMillis * 2);
+                this.tdm.triggerAsyncAMWRequestKillZnodeRestore(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_FREE, Utils.AMW_PAYLOAD_TYPE_RESTORE, this.masterId), FIXED_AUTHORIZATION_WAIT_TIME + 60000);
             } else if (dataPayload.equals(AMW_REQUEST_KILL_CODE_KILL) && this.timeAMWFirstKillArrived != 0L){
                 logger.info("ATM received a request to KILL AMW, however, this is not first request. Time is: " + this.timeAMWFirstKillArrived + ". Denying with DENIED.");
-                this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
+                
+                AuthorizationQueue.enqueueResponse(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
+                //this.tdm.setRequestAMWKillZnodeData(Utils.requestAMWKillZnodeDataToBytes(AMW_REQUEST_KILL_CODE_DENIED, Utils.AMW_PAYLOAD_TYPE_RESPONSE, Utils.getRequesterFromRequestAmwKillZnodeData(sData)));
             } else if (dataPayload.equals(AMW_REQUEST_KILL_FREE)) {
                 logger.info("TM just got notified that " + this.requestAMWKillZkNode + " got restored. Resetting requests' time.");
                 this.timeAMWFirstKillArrived = 0L;

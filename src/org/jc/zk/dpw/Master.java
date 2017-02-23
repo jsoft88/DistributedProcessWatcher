@@ -251,17 +251,26 @@ public class Master implements
             //Remember CMW cannot compete to become ATM.
             this.dm.createTimeZnode(
                     this.masterIdentifier, this.zkTimeNode, 
-                    Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, this.ntpServers));
+                    Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, true, this.ntpServers));
         }
         
         synchronized(this) {
-            try {
-                while (!this.killSelf) {
-                    logger.info("Master Watcher going to wait until killself is set to true");
+            while (!this.killSelf) {
+                logger.info("Master Watcher going to wait until killself is set to true");
+                try {
                     wait();
+                } catch (InterruptedException ex) {
+                    logger.info("Master Watcher interrupted while waiting in main loop...", ex);
                 }
+            }
+            try {
+                logger.info("MW now waiting " + (TimeMaster.FIXED_AUTHORIZATION_WAIT_TIME + this.timeTickInterval) + " millis before exiting gracefully.");
+                wait(TimeMaster.FIXED_AUTHORIZATION_WAIT_TIME + this.timeTickInterval);
             } catch (InterruptedException ex) {
-                logger.info("Master Watcher interrupted while waiting in main loop...", ex);
+                logger.error("MW was interrupted while waiting to exit gracefully", ex);
+            } finally {
+                logger.info("MW now exiting. ID is: " + this.masterIdentifier);
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -545,7 +554,6 @@ public class Master implements
 
     public void childMasterWatcherSleep() {
         if (this.child && this.activeChild && this.p != null) {
-            this.closing(0);
             logger.info("Child Master Watcher was told to destroy its process and wait.");
             logger.info("CMW now telling process wrappers to destroy themselves.");
             byte[] hbkillData = Utils.processHeartBeatDataToBytes(ProcessWrapper.FLAG_KILLSELF);
@@ -567,16 +575,17 @@ public class Master implements
             }
             
             ProcessBuilder kpb = new ProcessBuilder(this.hardKillScript.split("\\s"));
+            kpb.inheritIO();
             try {
                 logger.info("Executing hard kill script: " + kpb.toString());
                 Process kp = kpb.start();
-                ProcessStreamConsumer scInfo = new ProcessStreamConsumer(kp.getInputStream(), logger);
-                ProcessStreamConsumer scError = new ProcessStreamConsumer(kp.getErrorStream(), logger);
-                scInfo.start();
-                scError.start();
+                //ProcessStreamConsumer scInfo = new ProcessStreamConsumer(kp.getInputStream(), logger);
+                //ProcessStreamConsumer scError = new ProcessStreamConsumer(kp.getErrorStream(), logger);
+                //scInfo.start();
+                //scError.start();
                 int exitStatus = kp.waitFor();
-                scInfo.join();
-                scError.join();
+                //scInfo.join();
+                //scError.join();
                 
                 if (exitStatus == 0) {
                     logger.info("Hard kill script completed successfully.");
@@ -589,9 +598,9 @@ public class Master implements
                 } else if (ex instanceof InterruptedException) {
                     logger.error("CMW interrupted while waiting for hard kill script to complete. Best effort kill in progress, that is, no way of knowing if things went well.");
                 }
-            } /*finally {
+            } finally {
                 this.closing(0);
-            }*/
+            }
         }
     }
 
@@ -854,12 +863,13 @@ public class Master implements
             System.arraycopy(this.argsForProgram, 0, pbArgs, sizeOfProgramArray + 3, this.argsForProgram.length);
             logger.info("Running process with: " + Arrays.toString(pbArgs));
             ProcessBuilder pb = new ProcessBuilder(pbArgs);
+            pb.inheritIO();
             try {
                 this.p = pb.start();
-                ProcessStreamConsumer scInfo = new ProcessStreamConsumer(this.p.getInputStream(), logger);
-                ProcessStreamConsumer scError = new ProcessStreamConsumer(this.p.getErrorStream(), logger);
-                scInfo.start();
-                scError.start();
+                //ProcessStreamConsumer scInfo = new ProcessStreamConsumer(this.p.getInputStream(), logger);
+                //ProcessStreamConsumer scError = new ProcessStreamConsumer(this.p.getErrorStream(), logger);
+                //scInfo.start();
+                //scError.start();
             } catch (IOException ex) {
                 logger.error("Child Master Watcher tried to start process, but failed.", ex);
                 this.killSelf = true;
@@ -919,7 +929,7 @@ public class Master implements
         this.dm.createTimeZnode(
                 this.masterIdentifier, 
                 this.zkTimeNode, 
-                Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, this.ntpServers));
+                Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, true, this.ntpServers));
     }
 
     @Override
@@ -1095,7 +1105,7 @@ public class Master implements
         }
         
         //Active master does not need to worry about being granted permission.
-        if (!this.child && this.active) {
+        if (this.child || (!this.child && this.active)) {
             return;
         }
         
@@ -1147,7 +1157,7 @@ public class Master implements
             
             synchronized (this) {
                 try {
-                    wait(5000);
+                    wait(5000 + this.waitTimeBeforeHardKillExec);
                 } catch (InterruptedException ex) {
                     logger.error("Inactive Master Watcher interrupted while waiting to remove masters', time and observed znodes.", ex);
                 } finally {
@@ -1156,7 +1166,7 @@ public class Master implements
                     this.dm.createTimeZnode(
                             this.masterIdentifier, 
                             this.zkTimeNode, 
-                            Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, this.ntpServers));
+                            Utils.generateDataForTimeZnode(this.masterIdentifier, INITIAL_TIME, true, this.ntpServers));
                 }
             }
         } else if (continuePermissionCheck && (dataPayload.equals(TimeMaster.AMW_REQUEST_KILL_CODE_DENIED) 
@@ -1164,8 +1174,8 @@ public class Master implements
             this.cdl = new CountDownLatch(1);
             while (true) {
                 try {
-                    logger.info("IMW asked for permission to compete for AMW, but got denied or busy. Will wait a max of " + this.timeTickInterval * 4 + " millis until new time znode for time listeners is created.");
-                    boolean expired = !this.cdl.await(this.timeTickInterval * 4, TimeUnit.MILLISECONDS);
+                    logger.info("IMW asked for permission to compete for AMW, but got denied or busy. Will wait a max of " + (this.timeTickInterval + this.waitTimeBeforeHardKillExec) + " millis until new time znode for time listeners is created.");
+                    boolean expired = !this.cdl.await(this.timeTickInterval + this.waitTimeBeforeHardKillExec, TimeUnit.MILLISECONDS);
                     if (!expired) {
                         logger.info("IMW just got notified that a new time znode for time listeners has been created.");
                     } else {
