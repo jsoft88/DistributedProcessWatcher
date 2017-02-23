@@ -158,11 +158,14 @@ public class Utils {
      * 
      * @param masterId String representing the identifier of current active TM.
      * @param time long representing time in milliseconds.
+     * @param updateWontBePushedToListener boolean representing whether the ATM
+     * will push an update to time listeners after reporting its health status. 
+     * True if it won't push an update to time listeners, false otherwise.
      * @param ntpServers String array containing the ip addresses of NTP servers.
      * @return byte array containing the data to be placed under time masters' keep
      * alive znode.
      */
-    public static byte[] generateDataForTimeZnode(String masterId, long time, String[] ntpServers) {
+    public static byte[] generateDataForTimeZnode(String masterId, long time, boolean updateWontBePushedToListener, String[] ntpServers) {
         if (time < 0) {
             try {
                 time = Utils.getNetworkTime(ntpServers);
@@ -172,9 +175,37 @@ public class Utils {
             }
         }
         StringBuilder sb = new StringBuilder();
-        sb.append(masterId).append(";").append(String.valueOf(time));
+        sb.append(masterId).append(";").append(String.valueOf(time)).append(";").append(updateWontBePushedToListener);
         
         return sb.toString().getBytes(Charset.forName("UTF-8"));
+    }
+    
+    /**
+     * Use this method to identify whether the ATM is pushing an update to time listeners or not. 
+     * If the ATM won't push an update, it is probably because there's an election
+     * in progress, so the ATM and IMWs must update their inner clock without 
+     * waiting for the update of time listeners znode to happen, because it won't.
+     * 
+     * @param data String representing data that was written to masters' znode.
+     * @return true if the IMW must update its inner clock without waiting for
+     * time listeners znode to be update, or false otherwise.
+     */
+    public static boolean imwMustUpdateInnerClock(String data) {
+        return Boolean.parseBoolean(data.split(";")[2]);
+    }
+    
+    /**
+     * Use this method to identify whether the ATM is pushing an update to time listeners or not. 
+     * If the ATM won't push an update, it is probably because there's an election
+     * in progress, so the ATM and IMWs must update their inner clock without 
+     * waiting for the update of time listeners znode to happen, because it won't.
+     * 
+     * @param data byte array representing data that was written to masters' znode.
+     * @return true if the IMW must update its inner clock without waiting for
+     * time listeners znode to be update, or false otherwise.
+     */
+    public static boolean imwMustUpdateInnerClock(byte[] data) {
+        return imwMustUpdateInnerClock(Utils.timeMasterDataForTimeZnodeToString(data));
     }
     
     /**
