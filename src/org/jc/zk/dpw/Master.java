@@ -409,8 +409,12 @@ public class Master implements
                 } finally {
                     //When the waiting is done, request last update.
                     //Bare in mind that this is all best effort check.
-                    logger.info("Inactive Master Watcher waiting done, it will now read update from Active Master Watcher");
-                    this.dm.readLastUpdate();
+                    synchronized (this) {
+                        if (!this.runningElection) {
+                            logger.info("Inactive Master Watcher waiting done, it will now read update from Active Master Watcher");
+                            this.dm.readLastUpdate();
+                        }
+                    }
                 }
                 
             }
@@ -554,6 +558,7 @@ public class Master implements
 
     public void childMasterWatcherSleep() {
         if (this.child && this.activeChild && this.p != null) {
+            this.activeChild = false;
             logger.info("Child Master Watcher was told to destroy its process and wait.");
             logger.info("CMW now telling process wrappers to destroy themselves.");
             byte[] hbkillData = Utils.processHeartBeatDataToBytes(ProcessWrapper.FLAG_KILLSELF);
