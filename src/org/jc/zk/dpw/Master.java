@@ -566,7 +566,7 @@ public class Master implements
             logger.info("CMW will now wait " + this.waitTimeBeforeHardKillExec + " millis before executing hard kill script.");
             synchronized (this) {
                 try {
-                    wait(this.waitTimeBeforeHardKillExec);
+                    wait(this.waitTimeBeforeHardKillExec + 1L);
                 } catch (InterruptedException ex) {
                     logger.error("CMW interrupted while waiting grace period before destroying ProcessWrapper", ex);
                 }
