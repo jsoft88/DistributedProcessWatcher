@@ -144,7 +144,17 @@ public abstract class ProcessWrapper<T extends ProcessWrapperMonitor, G> impleme
                 this.pwm.updateZnode("0");
             } else if (data.equals(FLAG_KILLSELF)){
                 if (this.futureTask != null) {
-                    this.terminateProcessWrapper();
+                    logger.info("ProcessWrapper spawning thread to handle process clean termination.");
+                    /**
+                     * We spawn a new thread because this call might block the monitor.
+                     */
+                    new Thread(new Runnable() {
+
+                        @Override
+                        public void run() {
+                            ProcessWrapper.this.terminateProcessWrapper();
+                        }
+                    }).start();
                 }
             }
         }
@@ -178,6 +188,7 @@ public abstract class ProcessWrapper<T extends ProcessWrapperMonitor, G> impleme
             this.es.shutdown();
             try {
                 wait(5000);
+                logger.info("ProcessWrapper now shutting down executor service.");
                 this.es.shutdownNow();
                 return this.futureTask.get();
             } catch (InterruptedException | ExecutionException ex) {
